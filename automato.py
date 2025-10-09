@@ -2,7 +2,7 @@ from collections import defaultdict, deque
 from typing import Dict, Set, Tuple, List, Optional
 import json
 
-EPSILON = "ε"
+EPSILON = "&"
 
 
 class Automato:
@@ -49,6 +49,30 @@ class Automato:
                 if new_dsts:
                     new_transitions[(src, sym)] = new_dsts
         
+        self.transitions = new_transitions
+
+    def rename_state(self, old_name: str, new_name: str):
+        """Renomeia um estado em toda a estrutura do autômato."""
+        if old_name not in self.states:
+            raise ValueError(f"Estado '{old_name}' não existe.")
+        if new_name in self.states and new_name != old_name:
+            raise ValueError(f"O nome '{new_name}' já está em uso.")
+
+        self.states.remove(old_name)
+        self.states.add(new_name)
+
+        if self.start_state == old_name:
+            self.start_state = new_name
+        
+        if old_name in self.final_states:
+            self.final_states.remove(old_name)
+            self.final_states.add(new_name)
+
+        new_transitions = defaultdict(set)
+        for (src, sym), dsts in self.transitions.items():
+            new_src = new_name if src == old_name else src
+            new_dsts = {new_name if d == old_name else d for d in dsts}
+            new_transitions[(new_src, sym)] = new_dsts
         self.transitions = new_transitions
 
     # --- NOVO MÉTODO ADICIONADO ---
@@ -101,7 +125,7 @@ class Automato:
         return accepted
 
     # -------------------------
-    # Conversão NFA → DFA
+    # Conversão AFND → AFD
     # -------------------------
     def to_dfa(self):
         if not self.start_state:
@@ -134,14 +158,14 @@ class Automato:
         return dfa
 
     # -------------------------
-    # Minimização de DFA
+    # Minimização de AFD
     # -------------------------
     def minimize(self):
-        """Minimiza DFA pelo algoritmo de partições."""
+        """Minimiza AFD pelo algoritmo de partições."""
         if not self.is_dfa():
-            raise ValueError("A minimização requer um DFA válido.")
+            raise ValueError("A minimização requer um AFD válido.")
 
-        # Garante que o DFA é completo
+        # Garante que o AFD é completo
         self._make_complete()
 
         P = [self.final_states, self.states - self.final_states]
@@ -201,7 +225,7 @@ class Automato:
                              is_start=self.start_state in group,
                              is_final=bool(self.final_states & group))
 
-        # Adiciona transições ao novo DFA
+        # Adiciona transições ao novo AFD
         processed_transitions = set()
         for (src, sym), dsts in self.transitions.items():
             if src in state_map and (state_map[src], sym) not in processed_transitions:
@@ -213,7 +237,7 @@ class Automato:
         return newDFA
 
     def _make_complete(self):
-        """Adiciona um estado de erro para tornar o DFA completo, se necessário."""
+        """Adiciona um estado de erro para tornar o AFD completo, se necessário."""
         error_state_name = "_error"
         has_incomplete_transitions = False
         for s in self.states:
@@ -236,7 +260,7 @@ class Automato:
     # Validação
     # -------------------------
     def is_dfa(self) -> bool:
-        """Verifica se é um DFA válido."""
+        """Verifica se é um AFD válido."""
         for (src, sym), dsts in self.transitions.items():
             if len(dsts) != 1: return False
             if sym == EPSILON: return False

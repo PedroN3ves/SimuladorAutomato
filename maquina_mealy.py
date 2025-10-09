@@ -62,6 +62,26 @@ class MaquinaMealy:
         if key in self.transitions:
             del self.transitions[key]
 
+    def rename_state(self, old_name: str, new_name: str):
+        """Renomeia um estado em toda a estrutura da máquina."""
+        if old_name not in self.states:
+            raise ValueError(f"Estado '{old_name}' não existe.")
+        if new_name in self.states and new_name != old_name:
+            raise ValueError(f"O nome '{new_name}' já está em uso.")
+
+        self.states.remove(old_name)
+        self.states.add(new_name)
+
+        if self.start_state == old_name:
+            self.start_state = new_name
+
+        new_transitions = {}
+        for (src, in_sym), (dst, out_sym) in self.transitions.items():
+            new_src = new_name if src == old_name else src
+            new_dst = new_name if dst == old_name else dst
+            new_transitions[(new_src, in_sym)] = (new_dst, out_sym)
+        self.transitions = new_transitions
+
     # -------------------------
     # Simulação
     # -------------------------
@@ -131,4 +151,3 @@ class MaquinaMealy:
             machine.add_transition(t["src"], t["input"], t["dst"], t["output"])
             
         return machine
-
