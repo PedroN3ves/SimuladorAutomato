@@ -51,15 +51,16 @@ class Automato:
         
         self.transitions = new_transitions
 
-    # --- NOVO MÉTODO ADICIONADO PARA CORRIGIR BUG ---
+    # --- NOVO MÉTODO ADICIONADO ---
     def remove_transition(self, src: str, symbol: str, dst: str):
         """Remove um destino específico de uma transição."""
         key = (src, symbol)
         if key in self.transitions:
             self.transitions[key].discard(dst)
+            # Se o conjunto de destinos ficar vazio, remove a entrada do dicionário
             if not self.transitions[key]:
                 del self.transitions[key]
-    # -------------------------------------------------
+    # -----------------------------
 
     # -------------------------
     # Simulação
@@ -140,21 +141,25 @@ class Automato:
         if not self.is_dfa():
             raise ValueError("A minimização requer um DFA válido.")
 
+        # Garante que o DFA é completo
+        self._make_complete()
+
         P = [self.final_states, self.states - self.final_states]
-        W = [self.final_states]
+        W = [self.final_states] if len(self.final_states) <= len(self.states - self.final_states) else [self.states - self.final_states]
+
 
         while W:
-            A = W.pop()
+            A = W.pop(0)
             for c in self.alphabet:
-                X = {q for q in self.states
-                     if self.transitions.get((q, c), set()) & A}
-                newP = []
+                X = {q for q in self.states if self.transitions.get((q, c), set()) and next(iter(self.transitions.get((q,c), set())), None) in A}
+
+                new_P = []
                 for Y in P:
                     inter = Y & X
                     diff = Y - X
                     if inter and diff:
-                        newP.append(inter)
-                        newP.append(diff)
+                        new_P.append(inter)
+                        new_P.append(diff)
                         if Y in W:
                             W.remove(Y)
                             W.append(inter)
@@ -165,27 +170,67 @@ class Automato:
                             else:
                                 W.append(diff)
                     else:
-                        newP.append(Y)
-                P = newP
+                        new_P.append(Y)
+                P = new_P
+
+        # Remove o estado de erro, se existir
+        error_state_name = "_error"
+        if error_state_name in self.states:
+            self.remove_state(error_state_name)
+            # Refaz as partições sem o estado de erro
+            P = [p - {error_state_name} for p in P if p - {error_state_name}]
+
 
         newDFA = Automato()
         state_map = {}
+        
+        # Filtra grupos vazios que podem surgir da remoção do estado de erro
+        P = [group for group in P if group]
+
         for i, group in enumerate(P):
             if not group: continue
-            new_name = f"M{i}"
+            
+            # Escolhe um nome de estado representativo (o primeiro em ordem alfabética)
+            rep_name = sorted(list(group))[0]
+            new_name = f"{{{','.join(sorted(list(group)))}}}" if len(group) > 1 else rep_name
+            
             for s in group:
                 state_map[s] = new_name
+            
             newDFA.add_state(new_name,
                              is_start=self.start_state in group,
                              is_final=bool(self.final_states & group))
 
+        # Adiciona transições ao novo DFA
+        processed_transitions = set()
         for (src, sym), dsts in self.transitions.items():
-            if len(dsts) != 1:
-                continue
-            dst = next(iter(dsts))
-            newDFA.add_transition(state_map[src], sym, state_map[dst])
+            if src in state_map and (state_map[src], sym) not in processed_transitions:
+                dst = next(iter(dsts)) # É um DFA, então só há um destino
+                if dst in state_map:
+                    newDFA.add_transition(state_map[src], sym, state_map[dst])
+                    processed_transitions.add((state_map[src], sym))
 
         return newDFA
+
+    def _make_complete(self):
+        """Adiciona um estado de erro para tornar o DFA completo, se necessário."""
+        error_state_name = "_error"
+        has_incomplete_transitions = False
+        for s in self.states:
+            for sym in self.alphabet:
+                if not self.transitions.get((s, sym)):
+                    has_incomplete_transitions = True
+                    break
+            if has_incomplete_transitions:
+                break
+        
+        if has_incomplete_transitions:
+            self.add_state(error_state_name)
+            for s in list(self.states): # Itera sobre uma cópia
+                 for sym in self.alphabet:
+                    if not self.transitions.get((s,sym)):
+                        self.add_transition(s, sym, error_state_name)
+
 
     # -------------------------
     # Validação
@@ -196,10 +241,6 @@ class Automato:
             if len(dsts) != 1: return False
             if sym == EPSILON: return False
         
-        # Opcional: checar se todos os estados tem transição para todos os símbolos
-        # for s in self.states:
-        #     for sym in self.alphabet:
-        #         if (s, sym) not in self.transitions: return False
         return True
 
     # -------------------------
@@ -209,22 +250,41 @@ class Automato:
         """Gera código LaTeX TikZ para desenhar o autômato."""
         tikz = ["\\documentclass{standalone}",
                 "\\usepackage{tikz}",
-                "\\usetikzlibrary{automata, positioning}",
+                "\\usetikzlibrary{automata, positioning, arrows}",
                 "\\begin{document}",
-                "\\begin{tikzpicture}[->, >=stealth', auto, node distance=2cm, semithick]"]
+                "\\begin{tikzpicture}[->, >=stealth', auto, node distance=2.8cm, semithick]"]
 
-        for s in self.states:
+        # Define posições para evitar sobreposição (layout simples)
+        # Este é um layout de exemplo, a GUI usa posições definidas pelo usuário
+        nodes = sorted(list(self.states))
+        for i, s in enumerate(nodes):
             opts = ["state"]
             if s == self.start_state:
                 opts.append("initial")
             if s in self.final_states:
                 opts.append("accepting")
-            tikz.append(f"\\node[{','.join(opts)}] ({s}) {{$ {s} $}};")
+            
+            # Escapa caracteres especiais para o LaTeX
+            display_s = s.replace("_", "\\_")
+            tikz.append(f"\\node[{','.join(opts)}] ({s}) [right of=q{i-1} if i > 0 else base] {{${display_s}$}};")
 
+        # Agrupa transições para arcos curvos ou laços
+        edge_labels = defaultdict(list)
         for (src, sym), dsts in self.transitions.items():
             for dst in dsts:
-                label = sym if sym != EPSILON else "\\epsilon"
-                tikz.append(f"\\path ({src}) edge node {{$ {label} $}} ({dst});")
+                edge_labels[(src, dst)].append(sym)
+        
+        for (src, dst), symbols in edge_labels.items():
+            label = ",".join(sorted(symbols)).replace(EPSILON, "\\epsilon")
+            if src == dst:
+                tikz.append(f"\\path ({src}) edge [loop above] node {{${label}$}} ();")
+            else:
+                # Verifica se existe uma transição de volta para curvar o arco
+                if (dst, src) in edge_labels:
+                    tikz.append(f"\\path ({src}) edge [bend left] node {{${label}$}} ({dst});")
+                else:
+                    tikz.append(f"\\path ({src}) edge node {{${label}$}} ({dst});")
+
 
         tikz.append("\\end{tikzpicture}")
         tikz.append("\\end{document}")
@@ -247,10 +307,16 @@ class Automato:
     def from_json(cls, json_str: str):
         data = json.loads(json_str)
         a = cls()
-        for s in data["states"]:
-            a.add_state(s, is_start=(s == data["start_state"]),
-                        is_final=(s in data["final_states"]))
-        for t in data.get("transitions", []):
+        a.states = set(data.get("states", []))
+        a.start_state = data.get("start_state")
+        a.final_states = set(data.get("final_states", []))
+        a.alphabet = set(data.get("alphabet", []))
+        
+        transitions_data = data.get("transitions", [])
+        a.transitions = defaultdict(set)
+        for t in transitions_data:
+            src = t["src"]
+            sym = t["symbol"]
             for dst in t["dsts"]:
-                a.add_transition(t["src"], t["symbol"], dst)
+                a.transitions[(src, sym)].add(dst)
         return a
