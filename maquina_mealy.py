@@ -1,0 +1,134 @@
+from collections import defaultdict
+from typing import Dict, Set, Tuple, Optional, List
+import json
+
+class MaquinaMealy:
+    """
+    Representa uma Máquina de Mealy.
+
+    Uma Máquina de Mealy é um transdutor de estado finito que gera uma saída
+    com base em seu estado atual e no símbolo de entrada. A saída está
+    associada à transição.
+    """
+    def __init__(self):
+        self.states: Set[str] = set()
+        self.start_state: Optional[str] = None
+        self.input_alphabet: Set[str] = set()
+        self.output_alphabet: Set[str] = set()
+        # O dicionário de transições mapeia (estado_origem, simbolo_entrada) para (estado_destino, simbolo_saida)
+        self.transitions: Dict[Tuple[str, str], Tuple[str, str]] = {}
+
+    # -------------------------
+    # Manipulação de estados e transições
+    # -------------------------
+    def add_state(self, state: str, is_start: bool = False):
+        """Adiciona um novo estado à máquina."""
+        self.states.add(state)
+        if is_start or self.start_state is None:
+            self.start_state = state
+
+    def add_transition(self, src: str, input_symbol: str, dst: str, output_symbol: str):
+        """
+        Adiciona uma transição à máquina.
+        Para um dado estado e entrada, a transição e a saída são únicas (determinísticas).
+        """
+        if src not in self.states or dst not in self.states:
+            raise ValueError(f"Estado de origem '{src}' ou destino '{dst}' não existe.")
+        
+        self.input_alphabet.add(input_symbol)
+        self.output_alphabet.add(output_symbol)
+        self.transitions[(src, input_symbol)] = (dst, output_symbol)
+
+    def remove_state(self, state_to_remove: str):
+        """Remove um estado e todas as suas transições associadas."""
+        if state_to_remove not in self.states:
+            return
+
+        self.states.discard(state_to_remove)
+
+        if self.start_state == state_to_remove:
+            self.start_state = None
+
+        # Filtra as transições que envolvam o estado removido
+        new_transitions = {}
+        for (src, in_sym), (dst, out_sym) in self.transitions.items():
+            if src != state_to_remove and dst != state_to_remove:
+                new_transitions[(src, in_sym)] = (dst, out_sym)
+        self.transitions = new_transitions
+
+    def remove_transition(self, src: str, input_symbol: str):
+        """Remove uma transição específica baseada na origem e no símbolo de entrada."""
+        key = (src, input_symbol)
+        if key in self.transitions:
+            del self.transitions[key]
+
+    # -------------------------
+    # Simulação
+    # -------------------------
+    def simulate(self, input_str: str) -> Optional[str]:
+        """
+        Simulação rápida que retorna apenas a saída final.
+        """
+        _, final_output = self.simulate_history(input_str)
+        return final_output
+
+    def simulate_history(self, input_str: str) -> Tuple[List[Tuple[str, str]], Optional[str]]:
+        """
+        Simula a execução e retorna o histórico de passos para animação.
+        Retorna uma tupla contendo (histórico, saída_final).
+        O histórico é uma lista de tuplas (estado_atual, saida_acumulada).
+        Retorna None como saída_final se a máquina travar.
+        """
+        if not self.start_state:
+            return [], None
+
+        current_state = self.start_state
+        output_str = ""
+        # O histórico começa com o estado inicial e a saída vazia
+        history = [(current_state, "")]
+
+        for symbol in input_str:
+            transition_key = (current_state, symbol)
+            if transition_key not in self.transitions:
+                # Máquina trava, retorna o histórico até o momento e indica falha
+                return history, None
+            
+            next_state, output_symbol = self.transitions[transition_key]
+            
+            output_str += output_symbol
+            current_state = next_state
+            history.append((current_state, output_str))
+            
+        return history, output_str
+
+    # -------------------------
+    # Serialização
+    # -------------------------
+    def to_json(self) -> str:
+        """Serializa a máquina para uma string JSON."""
+        data = {
+            "states": list(self.states),
+            "start_state": self.start_state,
+            "input_alphabet": list(self.input_alphabet),
+            "output_alphabet": list(self.output_alphabet),
+            "transitions": [
+                {"src": src, "input": in_sym, "dst": dst, "output": out_sym}
+                for (src, in_sym), (dst, out_sym) in self.transitions.items()
+            ],
+        }
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, json_str: str) -> 'MaquinaMealy':
+        """Cria uma Máquina de Mealy a partir de uma string JSON."""
+        data = json.loads(json_str)
+        machine = cls()
+        
+        for s in data.get("states", []):
+            machine.add_state(s, is_start=(s == data.get("start_state")))
+        
+        for t in data.get("transitions", []):
+            machine.add_transition(t["src"], t["input"], t["dst"], t["output"])
+            
+        return machine
+
