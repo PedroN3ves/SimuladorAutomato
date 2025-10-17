@@ -85,7 +85,7 @@ class MainMenu:
         frame.pack(pady=10, fill='x')
 
         label = tk.Label(frame, text=text, bg=NORMAL_BG, fg=NORMAL_FG,
-                         font=("Helvetica", 12, "bold"), pady=20, cursor="hand2")
+                         font=("Helvetica", 12, "bold"), pady=25, cursor="hand2")
         label.pack(fill='x')
 
         # Efeitos de Hover (passar o mouse)

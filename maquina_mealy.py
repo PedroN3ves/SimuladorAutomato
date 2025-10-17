@@ -2,6 +2,8 @@ from collections import defaultdict
 from typing import Dict, Set, Tuple, Optional, List
 import json
 
+EPSILON = "&"
+
 class MaquinaMealy:
     """
     Representa uma Máquina de Mealy.

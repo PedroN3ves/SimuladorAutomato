@@ -4,15 +4,43 @@ gui_moore.py - Interface Tkinter para editar e simular Máquinas de Moore.
 """
 import json
 import math
+import os
 import tkinter as tk, tkinter.ttk as ttk
 from tkinter import simpledialog, filedialog, messagebox
 from typing import Dict, Tuple, List, DefaultDict
 
-from maquina_moore import MaquinaMoore
+from maquina_moore import MaquinaMoore, EPSILON, snapshot_of_moore, restore_from_moore_snapshot
 
 STATE_RADIUS = 28 # Um pouco maior para caber a saída
+from PIL import Image, ImageTk, ImageEnhance
 FONT = ("Helvetica", 11)
 ANIM_MS = 400
+
+class Tooltip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip_window = None
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+
+    def show_tooltip(self, event):
+        x = self.widget.winfo_pointerx() + 15
+        y = self.widget.winfo_pointery() + 10
+
+        self.tooltip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+
+        label = tk.Label(tw, text=self.text, justify='left',
+                       background="#ffffe0", relief='solid', borderwidth=1,
+                       font=("tahoma", "8", "normal"))
+        label.pack(ipadx=1)
+
+    def hide_tooltip(self, event):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+        self.tooltip_window = None
 
 class MooreGUI:
     def __init__(self, root: tk.Toplevel):
@@ -21,8 +49,9 @@ class MooreGUI:
         root.state('zoomed')
         
         style = ttk.Style()
-        style.configure("TButton", padding=(10, 5))
-        style.configure("Accent.TButton", padding=(10, 5))
+        style.configure("TButton", padding=(8, 6))
+        style.configure("Accent.TButton", padding=(8, 6))
+        style.configure("TMenubutton", padding=(8, 6))
         
         self.moore_machine = MaquinaMoore()
         self.positions: Dict[str, Tuple[int, int]] = {}
@@ -31,6 +60,13 @@ class MooreGUI:
         self.transition_src = None
         self.dragging = None
         self.mode_buttons: Dict[str, tk.Button] = {}
+        self.pinned_mode = "select"
+        self.icons: Dict[str, ImageTk.PhotoImage] = {}
+
+        # Undo/Redo
+        self.undo_stack: List[str] = []
+        self.redo_stack: List[str] = []
+
         self.history: List[Tuple[str, str]] = []
         self.sim_step = 0
         self.sim_playing = False
@@ -40,6 +76,7 @@ class MooreGUI:
         self.offset_x = 0
         self.offset_y = 0
         self.pan_last = None
+        self.current_filepath = None
         self.final_output_indicator = None
 
         self._build_toolbar()
@@ -47,21 +84,76 @@ class MooreGUI:
         self._build_simulation_bar()
         self._build_statusbar()
         self._bind_events()
+        self._push_undo_snapshot()
         self.draw_all()
 
     def _build_toolbar(self):
         toolbar = tk.Frame(self.root)
         toolbar.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(5, 10))
 
-        self.mode_buttons["add_state"] = ttk.Button(toolbar, text="Novo Estado", command=self.cmd_add_state)
-        self.mode_buttons["add_state"].pack(side=tk.LEFT, padx=2)
-        self.mode_buttons["add_transition"] = ttk.Button(toolbar, text="Nova Transição", command=self.cmd_add_transition)
-        self.mode_buttons["add_transition"].pack(side=tk.LEFT, padx=2)
-        self.mode_buttons["set_start"] = ttk.Button(toolbar, text="Definir Início", command=self.cmd_set_start)
-        self.mode_buttons["set_start"].pack(side=tk.LEFT, padx=2)
+        # --- Menu Arquivo ---
+        file_menu = tk.Menu(toolbar, tearoff=0)
+        file_menu.add_command(label="Abrir...", command=self.cmd_open)
+        file_menu.add_command(label="Salvar", command=self.cmd_save)
+        file_menu.add_command(label="Salvar Como...", command=self.cmd_save_as)
+        self._create_toolbar_menubutton(toolbar, "arquivo", "Arquivo", file_menu)
+        ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
 
-        self.mode_label = ttk.Label(toolbar, text="Modo: Selecionar")
-        self.mode_label.pack(side=tk.RIGHT)
+        self._create_toolbar_button(toolbar, "novo_estado", "Novo Estado", self.cmd_add_state)
+        self._create_toolbar_button(toolbar, "nova_transicao", "Nova Transição", self.cmd_add_transition)
+        self._create_toolbar_button(toolbar, "definir_inicio", "Definir Início", self.cmd_set_start)
+        self._create_toolbar_button(toolbar, "excluir_estado", "Excluir Estado", self.cmd_delete_state_mode)
+
+        # --- Menu Exportar ---
+        export_menu = tk.Menu(toolbar, tearoff=0)
+        export_menu.add_command(label="Exportar para TikZ (.tex)", command=self.cmd_export_tikz)
+        export_menu.add_command(label="Exportar para SVG (.svg)", command=self.cmd_export_svg)
+        export_menu.add_command(label="Exportar para PNG (.png)", command=self.cmd_export_png)
+        self._create_toolbar_menubutton(toolbar, "exportar", "Exportar", export_menu)
+
+        self.mode_label = ttk.Label(toolbar, text="Modo: Selecionar", font=("Helvetica", 11, "bold"))
+        self.mode_label.pack(side=tk.RIGHT, padx=10)
+
+    def _create_toolbar_menubutton(self, parent, icon_name, tooltip_text, menu):
+        icon_path = os.path.join("icons", f"{icon_name}.png")
+        try:
+            img = Image.open(icon_path)
+            enhancer = ImageEnhance.Color(img)
+            img = enhancer.enhance(1.5)
+            enhancer = ImageEnhance.Contrast(img)
+            img = enhancer.enhance(1.1)
+            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            self.icons[icon_name] = ImageTk.PhotoImage(img)
+            button = ttk.Menubutton(parent, image=self.icons[icon_name])
+        except FileNotFoundError:
+            button = ttk.Menubutton(parent, text=tooltip_text)
+            print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
+        
+        button["menu"] = menu
+        button.pack(side=tk.LEFT, padx=2)
+        Tooltip(button, tooltip_text)
+
+    def _create_toolbar_button(self, parent, icon_name, tooltip_text, command):
+        icon_path = os.path.join("icons", f"{icon_name}.png")
+        try:
+            img = Image.open(icon_path)
+            enhancer = ImageEnhance.Color(img)
+            img = enhancer.enhance(1.5)
+            enhancer = ImageEnhance.Contrast(img)
+            img = enhancer.enhance(1.1)
+            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            self.icons[icon_name] = ImageTk.PhotoImage(img)
+            button = ttk.Button(parent, image=self.icons[icon_name], command=command)
+        except FileNotFoundError:
+            button = ttk.Button(parent, text=tooltip_text, command=command)
+            print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
+        
+        button.pack(side=tk.LEFT, padx=2)
+        self.mode_buttons[icon_name] = button
+        Tooltip(button, tooltip_text)
+
+        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m))
+        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode))
 
     def _build_canvas(self):
         self.canvas = tk.Canvas(self.root, bg="white")
@@ -70,7 +162,7 @@ class MooreGUI:
     def _build_simulation_bar(self):
         bottom = tk.Frame(self.root)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
-        ttk.Label(bottom, text="Entrada para Simulação:").pack(side=tk.LEFT)
+        ttk.Label(bottom, text="Entrada para Simulação:", font=("Helvetica", 10)).pack(side=tk.LEFT)
         self.input_entry = ttk.Entry(bottom, width=30)
         self.input_entry.pack(side=tk.LEFT, padx=6)
         ttk.Button(bottom, text="Simular", command=self.cmd_animate, style="Accent.TButton").pack(side=tk.LEFT, padx=2)
@@ -78,7 +170,7 @@ class MooreGUI:
         ttk.Button(bottom, text="Play/Pausar", command=self.cmd_play_pause).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Reiniciar", command=self.cmd_reset_sim).pack(side=tk.LEFT, padx=2)
         ttk.Separator(bottom, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
-        ttk.Label(bottom, text="Saída Gerada:").pack(side=tk.LEFT)
+        ttk.Label(bottom, text="Saída Gerada:", font=("Helvetica", 10)).pack(side=tk.LEFT)
         self.output_canvas = tk.Canvas(bottom, height=40, bg="white", highlightthickness=0)
         self.output_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
@@ -97,32 +189,111 @@ class MooreGUI:
         self.canvas.bind("<Button-2>", self.on_middle_press)
         self.canvas.bind("<B2-Motion>", self.on_middle_drag)
         self.canvas.bind("<ButtonRelease-2>", self.on_middle_release)
+        self.root.bind("<Control-z>", lambda e: self.undo())
+        self.root.bind("<Control-y>", lambda e: self.redo())
 
 
     def _update_mode_button_styles(self):
+        # O estilo de destaque reflete o modo PINADO (fixo)
         for name, btn in self.mode_buttons.items():
-            base_mode = self.mode.replace("_src", "").replace("_dst", "")
-            btn.config(style="Accent.TButton" if name == base_mode else "TButton")
+            is_pinned = (name == self.pinned_mode.replace("_src", "").replace("_dst", ""))
+            btn.config(style="Accent.TButton" if is_pinned else "TButton")
 
-    def _set_mode(self, new_mode):
+    def _set_mode(self, new_mode, pinned=False):
+        if pinned:
+            self.pinned_mode = new_mode
+
         self.mode = new_mode
         mode_map = {
             "select": "Modo: Selecionar", "add_state": "Modo: Adicionar Estado",
             "add_transition_src": "Modo: Adicionar Transição (Origem)",
             "add_transition_dst": "Modo: Adicionar Transição (Destino)",
-            "set_start": "Modo: Definir Início"
+            "set_start": "Modo: Definir Início",
+            "delete_state": "Modo: Excluir Estado"
         }
         cursor_map = {
             "add_state": "crosshair", "add_transition_src": "hand2",
-            "add_transition_dst": "hand2", "set_start": "hand2"
+            "add_transition_dst": "hand2", "set_start": "hand2",
+            "delete_state": "X_cursor"
         }
         self.canvas.config(cursor=cursor_map.get(new_mode, "arrow"))
         self.mode_label.config(text=mode_map.get(new_mode, "Modo: Selecionar"))
         self._update_mode_button_styles()
 
-    def cmd_add_state(self): self._set_mode("add_state")
-    def cmd_add_transition(self): self._set_mode("add_transition_src")
-    def cmd_set_start(self): self._set_mode("set_start")
+    def cmd_add_state(self): self._set_mode("add_state", pinned=True)
+    def cmd_add_transition(self): self._set_mode("add_transition_src", pinned=True)
+    def cmd_set_start(self): self._set_mode("set_start", pinned=True)
+
+    def cmd_delete_state_mode(self):
+        self._set_mode("delete_state", pinned=True)
+        self.status.config(text="Clique em um estado para excluí-lo.")
+
+    def cmd_open(self):
+        """Abre um arquivo de Máquina de Moore (.json)."""
+        path = filedialog.askopenfilename(
+            defaultextension=".json",
+            filetypes=[("Moore Machine Files", "*.json"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                snapshot = f.read()
+            self.moore_machine, self.positions = restore_from_moore_snapshot(snapshot)
+            self.current_filepath = path
+            self.root.title(f"Editor de Máquinas de Moore — {self.current_filepath}")
+            self.undo_stack = [snapshot]
+            self.redo_stack.clear()
+            self.draw_all()
+            self.status.config(text=f"Arquivo '{path}' carregado com sucesso.")
+        except Exception as e:
+            messagebox.showerror("Erro ao Abrir", f"Não foi possível carregar o arquivo:\n{e}", parent=self.root)
+
+    def cmd_save(self):
+        """Salva a máquina no arquivo atual. Se não houver, chama 'Salvar Como'."""
+        if not self.current_filepath:
+            self.cmd_save_as()
+        else:
+            try:
+                with open(self.current_filepath, "w", encoding="utf-8") as f:
+                    f.write(snapshot_of_moore(self.moore_machine, self.positions))
+                self.status.config(text=f"Arquivo salvo em '{self.current_filepath}'.")
+            except Exception as e:
+                messagebox.showerror("Erro ao Salvar", f"Não foi possível salvar o arquivo:\n{e}", parent=self.root)
+
+    def cmd_save_as(self):
+        """Abre um diálogo para salvar a máquina em um novo arquivo."""
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("Moore Machine Files", "*.json"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        self.current_filepath = path
+        self.root.title(f"Editor de Máquinas de Moore — {self.current_filepath}")
+        self.cmd_save()
+
+    def cmd_export_tikz(self):
+        messagebox.showinfo("Exportar", "A exportação para TikZ ainda não foi implementada para Máquinas de Moore.", parent=self.root)
+
+    def cmd_export_svg(self):
+        path = filedialog.asksaveasfilename(defaultextension=".svg", filetypes=[("SVG files", "*.svg")])
+        if path:
+            with open(path, "w", encoding="utf-8") as f: f.write(self._generate_svg_text())
+            messagebox.showinfo("Exportar", f"SVG exportado para {path}", parent=self.root)
+
+    def cmd_export_png(self):
+        path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG files", "*.png")])
+        if not path: return
+        svg_text = self._generate_svg_text()
+        try:
+            import cairosvg
+            cairosvg.svg2png(bytestring=svg_text.encode('utf-8'), write_to=path)
+            messagebox.showinfo("Exportar PNG", f"PNG salvo em {path}", parent=self.root)
+        except ImportError:
+            messagebox.showwarning("Exportar PNG", "A biblioteca 'cairosvg' não está instalada.\nPara exportar para PNG, instale com: pip install cairosvg", parent=self.root)
+        except Exception as e:
+            messagebox.showerror("Exportar PNG", f"Ocorreu um erro: {e}", parent=self.root)
 
     def cmd_animate(self):
         input_str = self.input_entry.get()
@@ -171,19 +342,29 @@ class MooreGUI:
         x, y = event.x, event.y
         clicked_state = self._find_state_at(x, y)
 
+        if self.mode == "delete_state":
+            if clicked_state:
+                if messagebox.askyesno("Excluir", f"Excluir estado {clicked_state}?", parent=self.root):
+                    self._push_undo_snapshot()
+                    self.moore_machine.remove_state(clicked_state)
+                    if clicked_state in self.positions: del self.positions[clicked_state]                    
+                    self._set_mode("select", pinned=True)
+                    self.draw_all()
+            return
+
         if self.mode == "add_state":
             state_name = f"q{len(self.moore_machine.states)}"
             output_sym = simpledialog.askstring("Saída do Estado", "Símbolo de saída para o estado:", parent=self.root)
             if output_sym is not None:
-                self.moore_machine.add_state(state_name, output_sym)
+                self._push_undo_snapshot()
                 self.positions[state_name] = (x, y)
-                self._set_mode("select")
+                self.moore_machine.add_state(state_name, output_sym)
                 self.draw_all()
             return
 
         if self.mode == "add_transition_src" and clicked_state:
             self.transition_src = clicked_state
-            self._set_mode("add_transition_dst")
+            self._set_mode("add_transition_dst", pinned=True)
             self.status.config(text=f"Origem {clicked_state} selecionada. Clique no destino.")
             return
         
@@ -191,19 +372,21 @@ class MooreGUI:
             src, dst = self.transition_src, clicked_state
             inp = simpledialog.askstring("Transição", "Símbolo de entrada:", parent=self.root)
             if inp:
+                self._push_undo_snapshot()
                 self.moore_machine.add_transition(src, inp.strip(), dst)
                 self.draw_all()
-            self._set_mode("select")
+            self._set_mode("select", pinned=True)
             return
 
         if self.mode == "set_start" and clicked_state:
+            self._push_undo_snapshot()
             self.moore_machine.start_state = clicked_state
-            self._set_mode("select")
+            self._set_mode("select", pinned=True)
             self.draw_all()
             return
             
         if clicked_state:
-            self.dragging = (clicked_state, cx, cy)
+            self.dragging = (clicked_state, x, y)
 
     def on_canvas_drag(self, event):
         if self.dragging:
@@ -216,10 +399,11 @@ class MooreGUI:
             self.draw_all()
     
     def on_canvas_release(self, event):
+        if self.dragging: self._push_undo_snapshot()
         self.dragging = None
         
     def on_right_click(self, event):
-        state = self._find_state_at(*self._to_canvas(event.x, event.y))
+        state = self._find_state_at(event.x, event.y)
         if state:
             self._show_state_context_menu(event, state)
 
@@ -240,11 +424,13 @@ class MooreGUI:
         menu.tk_popup(event.x_root, event.y_root)
         
     def _set_start_state(self, state):
+        self._push_undo_snapshot()
         self.moore_machine.start_state = state
         self.draw_all()
 
     def _delete_state(self, state):
         if messagebox.askyesno("Excluir", f"Excluir o estado '{state}'?", parent=self.root):
+            self._push_undo_snapshot()
             self.moore_machine.remove_state(state)
             if state in self.positions: del self.positions[state]
             self.draw_all()
@@ -253,16 +439,19 @@ class MooreGUI:
         new_name = simpledialog.askstring("Renomear", f"Novo nome para '{old_name}':", initialvalue=old_name, parent=self.root)
         if new_name and new_name != old_name:
             try:
+                self._push_undo_snapshot()
                 self.moore_machine.rename_state(old_name, new_name)
                 self.positions[new_name] = self.positions.pop(old_name)
                 self.draw_all()
             except ValueError as e:
                 messagebox.showerror("Erro", str(e), parent=self.root)
+                self.undo()
 
     def _edit_state_output(self, state: str):
         current_output = self.moore_machine.output_function.get(state, "")
         new_output = simpledialog.askstring("Editar Saída", f"Símbolo de saída para '{state}':", initialvalue=current_output, parent=self.root)
         if new_output is not None:
+            self._push_undo_snapshot()
             self.moore_machine.output_function[state] = new_output
             self.draw_all()
 
@@ -279,6 +468,7 @@ class MooreGUI:
             initialvalue=initial_value, parent=self.root)
 
         if new_label_str is not None:
+            self._push_undo_snapshot()
             # Remove as transições antigas
             for inp in transitions_to_edit:
                 del self.moore_machine.transitions[(src, inp)]
@@ -322,6 +512,10 @@ class MooreGUI:
             tx, ty = info.get("text_pos", (0,0))
             if tx and math.hypot(tx - cx, ty - cy) <= 20: return src, dst
         return None
+
+    def _generate_svg_text(self):
+        # Placeholder
+        return '<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"></svg>'
 
     def _draw_output_tape(self):
         """Desenha a fita de saída gerada no canvas."""
@@ -421,3 +615,26 @@ class MooreGUI:
         self.history, self.sim_step, self.sim_playing, self.final_output_indicator = [], 0, False, None
         self.status.config(text="Simulação reiniciada.")
         self.draw_all()
+
+    # --- Métodos de Undo/Redo ---
+    def _push_undo_snapshot(self):
+        snap = snapshot_of_moore(self.moore_machine, self.positions)
+        if not self.undo_stack or self.undo_stack[-1] != snap:
+            self.undo_stack.append(snap)
+            if len(self.undo_stack) > 50: self.undo_stack.pop(0)
+            self.redo_stack.clear()
+
+    def undo(self, event=None):
+        if len(self.undo_stack) > 1:
+            self.redo_stack.append(self.undo_stack.pop())
+            self.moore_machine, self.positions = restore_from_moore_snapshot(self.undo_stack[-1])
+            self.draw_all(); self.status.config(text="Desfeito.")
+        else: self.status.config(text="Nada para desfazer.")
+
+    def redo(self, event=None):
+        if self.redo_stack:
+            snap = self.redo_stack.pop()
+            self.undo_stack.append(snap)
+            self.moore_machine, self.positions = restore_from_moore_snapshot(snap)
+            self.draw_all(); self.status.config(text="Refeito.")
+        else: self.status.config(text="Nada para refazer.")

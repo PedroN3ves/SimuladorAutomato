@@ -1,5 +1,6 @@
 from collections import defaultdict
 from typing import Dict, Set, Tuple, Optional, List
+import json
 
 EPSILON = "&"
 
@@ -41,6 +42,27 @@ class AutomatoPilha:
 
         self.transitions[(src, input_sym, pop_sym)].add((dst, push_syms))
 
+    def remove_state(self, state_to_remove: str):
+        """Remove um estado e todas as suas transições associadas."""
+        if state_to_remove not in self.states:
+            return
+
+        self.states.discard(state_to_remove)
+
+        if self.start_state == state_to_remove:
+            self.start_state = None
+
+        self.final_states.discard(state_to_remove)
+
+        new_transitions = defaultdict(set)
+        for (src, inp, pop), destinations in self.transitions.items():
+            if src != state_to_remove:
+                # Filtra os destinos que não são para o estado removido
+                new_destinations = {d for d in destinations if d[0] != state_to_remove}
+                if new_destinations:
+                    new_transitions[(src, inp, pop)] = new_destinations
+        self.transitions = new_transitions
+
     def rename_state(self, old_name: str, new_name: str):
         """Renomeia um estado em toda a estrutura do autômato."""
         if old_name not in self.states:
@@ -58,8 +80,14 @@ class AutomatoPilha:
             self.final_states.remove(old_name)
             self.final_states.add(new_name)
 
-        # A lógica de atualização das transições é mais complexa e precisa ser implementada
-        # Por enquanto, focamos na renomeação nos conjuntos de estados.
+        new_transitions = defaultdict(set)
+        for (src, inp, pop), destinations in self.transitions.items():
+            new_src = new_name if src == old_name else src
+            new_destinations = set()
+            for dst, push in destinations:
+                new_destinations.add((new_name if dst == old_name else dst, push))
+            new_transitions[(new_src, inp, pop)] = new_destinations
+        self.transitions = new_transitions
 
     def simulate_history(self, input_str: str) -> Tuple[List[Tuple[str, str, Tuple]], bool]:
         """
@@ -159,3 +187,61 @@ class AutomatoPilha:
         # Para uma verificação simples, usamos o histórico.
         history, accepted = self.simulate_history(input_str)
         return accepted
+
+    def to_json(self) -> str:
+        """Serializa o autômato para uma string JSON."""
+        # Converte o defaultdict para um dict normal e as chaves/valores para tipos serializáveis
+        serializable_transitions = {}
+        for (src, inp, pop_sym), dests in self.transitions.items():
+            key = f"{src},{inp},{pop_sym}"
+            serializable_transitions[key] = list(dests)
+
+        data = {
+            "states": list(self.states),
+            "input_alphabet": list(self.input_alphabet),
+            "stack_alphabet": list(self.stack_alphabet),
+            "start_state": self.start_state,
+            "start_stack_symbol": self.start_stack_symbol,
+            "final_states": list(self.final_states),
+            "transitions": serializable_transitions,
+        }
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, json_str: str) -> 'AutomatoPilha':
+        """Cria um Autômato de Pilha a partir de uma string JSON."""
+        data = json.loads(json_str)
+        pda = cls()
+        pda.states = set(data.get("states", []))
+        pda.input_alphabet = set(data.get("input_alphabet", []))
+        pda.stack_alphabet = set(data.get("stack_alphabet", []))
+        pda.start_state = data.get("start_state")
+        pda.start_stack_symbol = data.get("start_stack_symbol", 'Z')
+        pda.final_states = set(data.get("final_states", []))
+
+        for key, dests in data.get("transitions", {}).items():
+            src, inp, pop_sym = key.split(',', 2)
+            pda.transitions[(src, inp, pop_sym)] = {tuple(d) for d in dests}
+            
+        return pda
+
+def snapshot_of_pda(automato: AutomatoPilha, positions: Dict[str, Tuple[int, int]]) -> str:
+    """Retorna JSON serializável representando o estado completo (autômato + posições)."""
+    data = {
+        "automato": json.loads(automato.to_json()),
+        "positions": positions
+    }
+    return json.dumps(data, ensure_ascii=False)
+
+def restore_from_pda_snapshot(s: str) -> Tuple[AutomatoPilha, Dict[str, Tuple[int, int]]]:
+    """Restaura um autômato de pilha e suas posições a partir de um snapshot JSON."""
+    data = json.loads(s)
+    
+    # Garante que o objeto do autômato seja um dicionário antes de passar para from_json
+    automato_data = data.get("automato", {})
+    if isinstance(automato_data, str):
+        automato_data = json.loads(automato_data)
+
+    automato = AutomatoPilha.from_json(json.dumps(automato_data))
+    positions = data.get("positions", {})
+    return automato, positions

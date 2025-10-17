@@ -2,6 +2,8 @@ from collections import defaultdict
 from typing import Dict, Set, Tuple, Optional, List
 import json
 
+EPSILON = "&"
+
 class MaquinaMoore:
     """
     Representa uma Máquina de Moore.
@@ -125,3 +127,24 @@ class MaquinaMoore:
             machine.add_transition(t["src"], t["input"], t["dst"])
             
         return machine
+
+def snapshot_of_moore(machine: MaquinaMoore, positions: Dict[str, Tuple[int, int]]) -> str:
+    """Retorna JSON serializável representando o estado completo (máquina + posições)."""
+    data = {
+        "moore_machine": json.loads(machine.to_json()),
+        "positions": positions
+    }
+    return json.dumps(data, ensure_ascii=False)
+
+def restore_from_moore_snapshot(s: str) -> Tuple[MaquinaMoore, Dict[str, Tuple[int, int]]]:
+    """Restaura uma máquina de Moore e suas posições a partir de um snapshot JSON."""
+    data = json.loads(s)
+    
+    # Garante que o objeto da máquina seja um dicionário antes de passar para from_json
+    machine_data = data.get("moore_machine", {})
+    if isinstance(machine_data, str):
+        machine_data = json.loads(machine_data)
+
+    machine = MaquinaMoore.from_json(json.dumps(machine_data))
+    positions = data.get("positions", {})
+    return machine, positions

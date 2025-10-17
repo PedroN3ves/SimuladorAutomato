@@ -4,9 +4,11 @@ gui.py - Interface Tkinter para editar e simular autômatos.
 """
 import json
 import math
+import os
 import io
 import tkinter as tk
 from tkinter import simpledialog, filedialog, messagebox, ttk
+from PIL import Image, ImageTk, ImageEnhance
 from typing import Dict, Tuple, Set, List, DefaultDict, Optional
 
 from automato import Automato, EPSILON
@@ -47,6 +49,35 @@ def restore_from_snapshot(s: str):
     return a, pos
 
 # -------------------------
+# Classe para Tooltips
+# -------------------------
+class Tooltip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip_window = None
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+
+    def show_tooltip(self, event):
+        x = self.widget.winfo_pointerx() + 15
+        y = self.widget.winfo_pointery() + 10
+
+        self.tooltip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+
+        label = tk.Label(tw, text=self.text, justify='left',
+                       background="#ffffe0", relief='solid', borderwidth=1,
+                       font=("tahoma", "8", "normal"))
+        label.pack(ipadx=1)
+
+    def hide_tooltip(self, event):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+        self.tooltip_window = None
+
+# -------------------------
 # Editor GUI
 # -------------------------
 class EditorGUI:
@@ -57,9 +88,9 @@ class EditorGUI:
 
         # Estilo para aumentar o tamanho dos botões
         style = ttk.Style()
-        style.configure("TButton", padding=(10, 5))
-        style.configure("Accent.TButton", padding=(10, 5))
-        style.configure("TMenubutton", padding=(10, 5))
+        style.configure("TButton", padding=(8, 6))
+        style.configure("Accent.TButton", padding=(8, 6))
+        style.configure("TMenubutton", padding=(8, 6))
 
         # Modelo de dados
         self.automato = Automato()
@@ -70,8 +101,10 @@ class EditorGUI:
         self.dragging = None
         self.mode = "select"
         self.transition_src = None
+        self.pinned_mode = "select"
         
         self.mode_buttons: Dict[str, tk.Button] = {}
+        self.icons: Dict[str, ImageTk.PhotoImage] = {}
 
         # Undo/Redo
         self.undo_stack: List[str] = []
@@ -129,34 +162,26 @@ class EditorGUI:
         toolbar.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(5, 10))
 
         # --- Menu Arquivo ---
-        file_menu_button = ttk.Menubutton(toolbar, text="Arquivo")
-        file_menu = tk.Menu(file_menu_button, tearoff=0)
+        file_menu = tk.Menu(toolbar, tearoff=0)
         file_menu.add_command(label="Abrir...", command=self.cmd_open)
         file_menu.add_command(label="Salvar", command=self.cmd_save)
         file_menu.add_command(label="Salvar Como...", command=self.cmd_save_as)
-        file_menu_button["menu"] = file_menu
-        file_menu_button.pack(side=tk.LEFT, padx=2)
+        self._create_toolbar_menubutton(toolbar, "arquivo", "Arquivo", file_menu)
         ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
 
+        self._create_toolbar_button(toolbar, "novo_estado", "Novo Estado", self.cmd_add_state)
+        self._create_toolbar_button(toolbar, "nova_transicao", "Nova Transição", self.cmd_add_transition)
+        self._create_toolbar_button(toolbar, "definir_inicio", "Definir Início", self.cmd_set_start)
+        self._create_toolbar_button(toolbar, "alternar_final", "Alternar Final", self.cmd_toggle_final)
+        self._create_toolbar_button(toolbar, "excluir_estado", "Excluir Estado", self.cmd_delete_state_mode)
+        self._create_toolbar_button(toolbar, "excluir_transicao", "Excluir Transição", self.cmd_delete_transition_mode)
+
         # Grupo 1: Edição
-        self.mode_buttons["add_state"] = ttk.Button(toolbar, text="Novo Estado", command=self.cmd_add_state)
-        self.mode_buttons["add_state"].pack(side=tk.LEFT, padx=2)
-        self.mode_buttons["add_transition"] = ttk.Button(toolbar, text="Nova Transição", command=self.cmd_add_transition)
-        self.mode_buttons["add_transition"].pack(side=tk.LEFT, padx=2)
-        self.mode_buttons["set_start"] = ttk.Button(toolbar, text="Definir Início", command=self.cmd_set_start)
-        self.mode_buttons["set_start"].pack(side=tk.LEFT, padx=2)
-        self.mode_buttons["toggle_final"] = ttk.Button(toolbar, text="Alternar Final", command=self.cmd_toggle_final)
-        self.mode_buttons["toggle_final"].pack(side=tk.LEFT, padx=2)
-        self.mode_buttons["delete_state"] = ttk.Button(toolbar, text="Excluir Estado", command=self.cmd_delete_state_mode)
-        self.mode_buttons["delete_state"].pack(side=tk.LEFT, padx=2)
-        self.mode_buttons["delete_transition"] = ttk.Button(toolbar, text="Excluir Transição", command=self.cmd_delete_transition_mode)
-        self.mode_buttons["delete_transition"].pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
 
         # Grupo 2: Operações e Simulação
-        operations_menu_button = ttk.Menubutton(toolbar, text="Operações")
-        operations_menu = tk.Menu(operations_menu_button, tearoff=0)
+        operations_menu = tk.Menu(toolbar, tearoff=0)
         operations_menu.add_command(label="Converter AFND → AFD", command=self.cmd_convert_to_dfa)
         operations_menu.add_command(label="Minimizar AFD", command=self.cmd_minimize)
         operations_menu.add_command(label="Validar AFD", command=self.cmd_validate_dfa)
@@ -164,26 +189,59 @@ class EditorGUI:
         operations_menu.add_command(label="Converter para Gramática Regular", command=self.cmd_convert_to_grammar)
         operations_menu.add_separator()
         operations_menu.add_command(label="Simulação Rápida", command=self.cmd_quick_simulate)
-        operations_menu_button["menu"] = operations_menu
-        operations_menu_button.pack(side=tk.LEFT, padx=2)
+        self._create_toolbar_menubutton(toolbar, "operacoes", "Operações", operations_menu)
 
         # Grupo 3: Exportação
-        export_menu_button = ttk.Menubutton(toolbar, text="Exportar")
-        export_menu = tk.Menu(export_menu_button, tearoff=0)
+        export_menu = tk.Menu(toolbar, tearoff=0)
         export_menu.add_command(label="Exportar para TikZ (.tex)", command=self.cmd_export_tikz)
         export_menu.add_command(label="Exportar para SVG (.svg)", command=self.cmd_export_svg)
         export_menu.add_command(label="Exportar para PNG (.png)", command=self.cmd_export_png)
-        export_menu_button["menu"] = export_menu
-        export_menu_button.pack(side=tk.LEFT, padx=2)
+        self._create_toolbar_menubutton(toolbar, "exportar", "Exportar", export_menu)
 
-        ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
+        self.mode_label = ttk.Label(toolbar, text="Modo: selecionar", font=("Helvetica", 11, "bold"))
+        self.mode_label.pack(side=tk.RIGHT, padx=10)
 
-        # Grupo 4: Desfazer/Refazer
-        ttk.Button(toolbar, text="Undo (Ctrl+Z)", command=self.undo).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Redo (Ctrl+Y)", command=self.redo).pack(side=tk.LEFT, padx=2)
+    def _create_toolbar_menubutton(self, parent, icon_name, tooltip_text, menu):
+        icon_path = os.path.join("icons", f"{icon_name}.png")
+        try:
+            img = Image.open(icon_path)
+            enhancer = ImageEnhance.Color(img)
+            img = enhancer.enhance(1.5) # Aumenta a saturação
+            enhancer = ImageEnhance.Contrast(img)
+            img = enhancer.enhance(1.1) # Aumenta o contraste
+            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            self.icons[icon_name] = ImageTk.PhotoImage(img)
+            button = ttk.Menubutton(parent, image=self.icons[icon_name])
+        except FileNotFoundError:
+            button = ttk.Menubutton(parent, text=tooltip_text)
+            print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
+        
+        button["menu"] = menu
+        button.pack(side=tk.LEFT, padx=2)
+        Tooltip(button, tooltip_text)
 
-        self.mode_label = ttk.Label(toolbar, text="Modo: selecionar")
-        self.mode_label.pack(side=tk.RIGHT)
+    def _create_toolbar_button(self, parent, icon_name, tooltip_text, command):
+        icon_path = os.path.join("icons", f"{icon_name}.png")
+        try:
+            img = Image.open(icon_path)
+            enhancer = ImageEnhance.Color(img)
+            img = enhancer.enhance(1.5)
+            enhancer = ImageEnhance.Contrast(img)
+            img = enhancer.enhance(1.1)
+            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            self.icons[icon_name] = ImageTk.PhotoImage(img)
+            button = ttk.Button(parent, image=self.icons[icon_name], command=command)
+        except FileNotFoundError:
+            # Se o ícone não for encontrado, cria um botão de texto como fallback
+            button = ttk.Button(parent, text=tooltip_text, command=command)
+            print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
+        
+        button.pack(side=tk.LEFT, padx=2)
+        self.mode_buttons[icon_name] = button
+        Tooltip(button, tooltip_text)
+
+        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m))
+        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode))
 
     def _build_canvas(self):
         self.canvas = tk.Canvas(self.root, width=1100, height=700, bg="white")
@@ -192,7 +250,7 @@ class EditorGUI:
     def _build_bottom(self):
         bottom = tk.Frame(self.root)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
-        ttk.Label(bottom, text="Entrada para Simulação:").pack(side=tk.LEFT)
+        ttk.Label(bottom, text="Entrada para Simulação:", font=("Helvetica", 10)).pack(side=tk.LEFT)
         self.input_entry = ttk.Entry(bottom, width=30)
         self.input_entry.pack(side=tk.LEFT, padx=6)
         ttk.Button(bottom, text="Simular", command=self.cmd_simulate, style="Accent.TButton").pack(side=tk.LEFT, padx=2)
@@ -224,15 +282,19 @@ class EditorGUI:
     def _update_mode_button_styles(self):
         """Atualiza o estilo dos botões de modo para refletir o modo atual."""
         for mode_name, button in self.mode_buttons.items():
-            current_base_mode = self.mode.replace("_src", "").replace("_dst", "")
+            # O estilo de destaque reflete o modo PINADO (fixo)
+            is_pinned = (mode_name == self.pinned_mode.replace("_src", "").replace("_dst", ""))
             
-            if mode_name == current_base_mode:
+            if is_pinned:
                 button.config(style="Accent.TButton") # Estilo de destaque para o botão ativo
             else:
                 button.config(style="TButton") # Estilo padrão
     
-    def _set_mode(self, new_mode):
+    def _set_mode(self, new_mode, pinned=False):
         """Define um novo modo de operação e atualiza a UI."""
+        if pinned:
+            self.pinned_mode = new_mode
+
         self.mode = new_mode
         
         mode_text_map = {
@@ -259,28 +321,28 @@ class EditorGUI:
         self._update_mode_button_styles()
 
     def cmd_add_state(self):
-        self._set_mode("add_state")
+        self._set_mode("add_state", pinned=True)
         self.status.config(text="Clique no canvas para posicionar o novo estado.")
 
     def cmd_add_transition(self):
-        self._set_mode("add_transition_src")
+        self._set_mode("add_transition_src", pinned=True)
         self.transition_src = None
         self.status.config(text="Clique no estado de origem.")
 
     def cmd_set_start(self):
-        self._set_mode("set_start")
+        self._set_mode("set_start", pinned=True)
         self.status.config(text="Clique em um estado para torná-lo inicial.")
 
     def cmd_toggle_final(self):
-        self._set_mode("toggle_final")
+        self._set_mode("toggle_final", pinned=True)
         self.status.config(text="Clique em um estado para alternar seu status de final.")
 
     def cmd_delete_state_mode(self):
-        self._set_mode("delete_state")
+        self._set_mode("delete_state", pinned=True)
         self.status.config(text="Clique em um estado para excluí-lo.")
 
     def cmd_delete_transition_mode(self):
-        self._set_mode("delete_transition")
+        self._set_mode("delete_transition", pinned=True)
         self.status.config(text="Clique no rótulo de uma transição para excluí-la.")
 
     def cmd_open(self):
@@ -436,7 +498,6 @@ class EditorGUI:
             self.automato.add_state(sid)
             self.positions[sid] = (cx, cy)
             self._push_undo_snapshot()
-            self._set_mode("select")
             self.status.config(text=f"Estado {sid} adicionado")
             self.draw_all()
             return
@@ -447,7 +508,7 @@ class EditorGUI:
         if self.mode == "delete_transition":
             if clicked_edge:
                 self._delete_edge(*clicked_edge)
-                self._set_mode("select")
+                self._set_mode("select", pinned=True)
             else:
                 self.status.config(text="Clique no rótulo de uma transição para excluí-la.")
             return
@@ -455,7 +516,7 @@ class EditorGUI:
         if self.mode == "add_transition_src":
             if clicked_state:
                 self.transition_src = clicked_state
-                self._set_mode("add_transition_dst")
+                self._set_mode("add_transition_dst", pinned=True)
                 self.status.config(text=f"Origem {clicked_state} selecionada. Clique no destino.")
             else:
                 self.status.config(text="Clique em um estado de origem válido.")
@@ -472,7 +533,7 @@ class EditorGUI:
                     self._push_undo_snapshot()
                     self.status.config(text=f"Transições adicionadas: {src} -> {dst} ({', '.join(syms)})")
                 else: self.status.config(text="Transição cancelada.")
-                self._set_mode("select")
+                self._set_mode("select", pinned=True)
                 self.transition_src = None
                 self.draw_all()
             else: self.status.config(text="Clique em um estado de destino.")
@@ -482,7 +543,7 @@ class EditorGUI:
             if clicked_state:
                 self._push_undo_snapshot()
                 self.automato.start_state = clicked_state
-                self._set_mode("select")
+                self._set_mode("select", pinned=True)
                 self.status.config(text=f"Estado {clicked_state} definido como inicial.")
                 self.draw_all()
             return
@@ -492,7 +553,7 @@ class EditorGUI:
                 self._push_undo_snapshot()
                 if clicked_state in self.automato.final_states: self.automato.final_states.remove(clicked_state)
                 else: self.automato.final_states.add(clicked_state)
-                self._set_mode("select")
+                self._set_mode("select", pinned=True)
                 self.status.config(text=f"Estado final alternado: {clicked_state}")
                 self.draw_all()
             return
@@ -503,7 +564,7 @@ class EditorGUI:
                     self._push_undo_snapshot()
                     self.automato.remove_state(clicked_state)
                     if clicked_state in self.positions: del self.positions[clicked_state]
-                    self._set_mode("select")
+                    self._set_mode("select", pinned=True)
                     self.status.config(text=f"Estado {clicked_state} excluído.")
                     self.draw_all()
             return
