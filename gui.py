@@ -17,11 +17,11 @@ STATE_RADIUS = 24
 FONT = ("Helvetica", 11)
 TOKEN_RADIUS = 8
 ANIM_MS = 300
- 
+
 # Cores
 ACTIVE_MODE_COLOR = "#dbeafe"
 DEFAULT_BTN_COLOR = "SystemButtonFace"
-ACTIVE_TRANSITION_COLOR = "#16a34a" 
+ACTIVE_TRANSITION_COLOR = "#16a34a"
 DEFAULT_TRANSITION_COLOR = "black"
 # --- NOVAS CORES PARA A FITA ---
 TAPE_CELL_COLOR = "#f8fafc" # Fundo da célula da fita
@@ -88,9 +88,11 @@ class EditorGUI:
 
         # Estilo para aumentar o tamanho dos botões
         style = ttk.Style()
-        style.configure("TButton", padding=(8, 6))
-        style.configure("Accent.TButton", padding=(8, 6))
-        style.configure("TMenubutton", padding=(8, 6))
+        # ***** Padding aumentado para TODOS os botões ttk *****
+        style.configure("TButton", padding=(15, 12))
+        style.configure("Accent.TButton", padding=(15, 12))
+        style.configure("TMenubutton", padding=(15, 12))
+        # ******************************************************
 
         # Modelo de dados
         self.automato = Automato()
@@ -102,7 +104,7 @@ class EditorGUI:
         self.mode = "select"
         self.transition_src = None
         self.pinned_mode = "select"
-        
+
         self.mode_buttons: Dict[str, tk.Button] = {}
         self.icons: Dict[str, ImageTk.PhotoImage] = {}
 
@@ -209,13 +211,13 @@ class EditorGUI:
             img = enhancer.enhance(1.5) # Aumenta a saturação
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(1.1) # Aumenta o contraste
-            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            img = img.resize((40, 40), Image.Resampling.LANCZOS) # Ícone maior
             self.icons[icon_name] = ImageTk.PhotoImage(img)
             button = ttk.Menubutton(parent, image=self.icons[icon_name])
         except FileNotFoundError:
             button = ttk.Menubutton(parent, text=tooltip_text)
             print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
-        
+
         button["menu"] = menu
         button.pack(side=tk.LEFT, padx=2)
         Tooltip(button, tooltip_text)
@@ -228,14 +230,14 @@ class EditorGUI:
             img = enhancer.enhance(1.5)
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(1.1)
-            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            img = img.resize((40, 40), Image.Resampling.LANCZOS) # Ícone maior
             self.icons[icon_name] = ImageTk.PhotoImage(img)
             button = ttk.Button(parent, image=self.icons[icon_name], command=command)
         except FileNotFoundError:
             # Se o ícone não for encontrado, cria um botão de texto como fallback
             button = ttk.Button(parent, text=tooltip_text, command=command)
             print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
-        
+
         button.pack(side=tk.LEFT, padx=2)
         self.mode_buttons[icon_name] = button
         Tooltip(button, tooltip_text)
@@ -251,19 +253,22 @@ class EditorGUI:
         bottom = tk.Frame(self.root)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
         ttk.Label(bottom, text="Entrada para Simulação:", font=("Helvetica", 10)).pack(side=tk.LEFT)
-        self.input_entry = ttk.Entry(bottom, width=30)
-        self.input_entry.pack(side=tk.LEFT, padx=6)
+        self.input_entry = ttk.Entry(bottom, width=30, font=("Helvetica", 11)) # Fonte um pouco maior na entrada
+        self.input_entry.pack(side=tk.LEFT, padx=6, ipady=5) # ipady para aumentar a altura da caixa de entrada
+
+        # ***** MODIFICAÇÃO: Botões de simulação agora usam o estilo ttk configurado *****
         ttk.Button(bottom, text="Simular", command=self.cmd_simulate, style="Accent.TButton").pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Passo", command=self.cmd_step).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Play/Pausar", command=self.cmd_play_pause).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Reiniciar", command=self.cmd_reset_sim).pack(side=tk.LEFT, padx=2)
         ttk.Separator(bottom, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
         ttk.Button(bottom, text="Testar Múltiplas Entradas", command=self.cmd_batch_test).pack(side=tk.LEFT, padx=2)
+        # ********************************************************************************
 
     def _build_statusbar(self):
         self.status = tk.Label(self.root, text="Pronto", anchor="w", relief=tk.SUNKEN)
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
-        
+
     def _bind_events(self):
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
@@ -284,19 +289,19 @@ class EditorGUI:
         for mode_name, button in self.mode_buttons.items():
             # O estilo de destaque reflete o modo PINADO (fixo)
             is_pinned = (mode_name == self.pinned_mode.replace("_src", "").replace("_dst", ""))
-            
+
             if is_pinned:
                 button.config(style="Accent.TButton") # Estilo de destaque para o botão ativo
             else:
                 button.config(style="TButton") # Estilo padrão
-    
+
     def _set_mode(self, new_mode, pinned=False):
         """Define um novo modo de operação e atualiza a UI."""
         if pinned:
             self.pinned_mode = new_mode
 
         self.mode = new_mode
-        
+
         mode_text_map = {
             "select": "Modo: Selecionar",
             "add_state": "Modo: Adicionar Estado",
@@ -440,7 +445,7 @@ class EditorGUI:
         text_area.insert("1.0", grammar_str)
         text_area.config(state="disabled") # Torna o texto somente leitura
         grammar_window.transient(self.root) # Mantém a janela no topo
-        
+
     def cmd_quick_simulate(self):
         if not self.automato.states:
             messagebox.showwarning("Simulação Rápida", "O autômato está vazio. Adicione estados primeiro.", parent=self.root)
@@ -504,7 +509,7 @@ class EditorGUI:
 
         clicked_state = self._find_state_at(cx, cy)
         clicked_edge = self._find_edge_at(cx, cy)
-        
+
         if self.mode == "delete_transition":
             if clicked_edge:
                 self._delete_edge(*clicked_edge)
@@ -656,7 +661,7 @@ class EditorGUI:
         """Abre um diálogo para renomear um estado."""
         new_name = simpledialog.askstring("Renomear Estado", f"Digite o novo nome para '{old_name}':",
                                           initialvalue=old_name, parent=self.root)
-        
+
         if new_name and new_name != old_name:
             try:
                 self._push_undo_snapshot()
@@ -702,7 +707,7 @@ class EditorGUI:
             # Aumenta a área de clique para o texto
             if tx and math.hypot(tx-cx, ty-cy) <= 20: return src, dst
         return None
-    
+
     #################################################################
     # NOVA FUNÇÃO PARA DESENHAR A FITA DE ENTRADA                   #
     #################################################################
@@ -727,10 +732,10 @@ class EditorGUI:
             # Determina se esta é a célula ativa
             is_head = (self.sim_step > 0 and i == self.sim_step - 1)
             fill_color = TAPE_HEAD_COLOR if is_head else TAPE_CELL_COLOR
-            
+
             self.canvas.create_rectangle(x1, y1, x2, y2, fill=fill_color, outline=TAPE_BORDER_COLOR)
             self.canvas.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=symbol, font=("Courier", 14, "bold"))
-            
+
             # Desenha a "cabeça de leitura" (um triângulo) acima da célula ativa
             if is_head:
                 head_x = (x1 + x2) / 2
@@ -745,12 +750,12 @@ class EditorGUI:
     def draw_all(self):
         self.canvas.delete("all")
         self.state_widgets.clear(); self.edge_widgets.clear()
-        
+
         # --- LÓGICA ADICIONADA PARA SIMULAÇÃO ---
         # Pega o conjunto de estados do passo anterior e o atual
         current_active_set = self.history[self.sim_step] if self.history else set()
         prev_active_set = self.history[self.sim_step - 1] if self.history and self.sim_step > 0 else set()
-        
+
         # Pega o símbolo que causou a transição atual
         current_symbol = self.sim_input_str[self.sim_step - 1] if self.sim_input_str and self.sim_step > 0 else None
         # --- FIM DA LÓGICA ADICIONADA ---
@@ -759,7 +764,7 @@ class EditorGUI:
         agg: DefaultDict[Tuple[str, str], Set[str]] = DefaultDict(set)
         for (src, sym), dsts in self.automato.transitions.items():
             for dst in dsts: agg[(src, dst)].add(sym)
-        
+
         for (src, dst), syms in agg.items():
             if src not in self.positions or dst not in self.positions: continue
             x1, y1 = self._from_canvas(*self.positions[src])
@@ -777,7 +782,7 @@ class EditorGUI:
                      closure_of_prev = self.automato.epsilon_closure(prev_active_set)
                      if src in closure_of_prev and dst in closure_of_prev:
                          is_active_transition = True
-            
+
             color = ACTIVE_TRANSITION_COLOR if is_active_transition else DEFAULT_TRANSITION_COLOR
             width = 3 if is_active_transition else 1.5
             # --- FIM DA LÓGICA DE DESTAQUE ---
@@ -819,11 +824,11 @@ class EditorGUI:
             self.canvas.create_text(x, y, text=sid, font=FONT)
             if sid in self.automato.final_states:
                 self.canvas.create_oval(x-(STATE_RADIUS-5)*self.scale, y-(STATE_RADIUS-5)*self.scale, x+(STATE_RADIUS-5)*self.scale, y+(STATE_RADIUS-5)*self.scale, outline="black", width=2)
-        
+
         if self.automato.start_state and self.automato.start_state in self.positions:
             sx, sy = self._from_canvas(*self.positions[self.automato.start_state])
             self.canvas.create_line(sx-STATE_RADIUS*2*self.scale, sy, sx-STATE_RADIUS*self.scale, sy, arrow=tk.LAST, width=2)
-        
+
         if self.result_indicator:
             color = "#16a34a" if self.result_indicator == "ACEITA" else "#dc2626"
             self.canvas.create_text(self.canvas.winfo_width()-60, 30, text=self.result_indicator, font=("Helvetica", 16, "bold"), fill=color)
@@ -839,7 +844,7 @@ class EditorGUI:
     def cmd_simulate(self):
         self.sim_input_str = self.input_entry.get()
         history, _ = self.automato.simulate_history(self.sim_input_str)
-        if not history: 
+        if not history:
             messagebox.showwarning("Simular", "Autômato vazio ou sem estado inicial.", parent=self.root)
             return
         self.history = [h for h, _ in history]
@@ -850,7 +855,7 @@ class EditorGUI:
         if not self.history:
             messagebox.showwarning("Passo", "Nenhuma simulação em andamento. Clique em 'Simular' primeiro.", parent=self.root)
             return
-            
+
         if self.sim_step >= len(self.history) - 1:
             if self.history:
                 accepted = bool(self.history[-1] & self.automato.final_states)
@@ -874,7 +879,7 @@ class EditorGUI:
             self.result_indicator = "ACEITA" if bool(self.history[-1] & self.automato.final_states) else "REJEITADA"
             self.sim_playing = False
             self.draw_all()
-    
+
     def cmd_reset_sim(self):
         self.history, self.sim_step, self.sim_playing, self.result_indicator, self.sim_input_str = [], 0, False, None, ""
         self.draw_all()
@@ -909,7 +914,7 @@ class EditorGUI:
             self.automato, self.positions = restore_from_snapshot(snap)
             self.draw_all(); self.status.config(text="Refeito.")
         else: self.status.config(text="Nada para refazer.")
-            
+
     def _generate_svg_text(self):
         # Placeholder
         return '<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"></svg>'

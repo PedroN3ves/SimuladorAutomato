@@ -65,13 +65,15 @@ class MealyGUI:
         self.root = root
         root.title("Editor de Máquinas de Mealy")
         root.state('zoomed') # Inicia a janela maximizada
-        
+
         # Estilo para aumentar o tamanho dos botões
         style = ttk.Style()
-        style.configure("TButton", padding=(8, 6))
-        style.configure("Accent.TButton", padding=(8, 6))
-        style.configure("TMenubutton", padding=(8, 6))
-        
+        # ***** MODIFICAÇÃO: Aumenta o padding dos botões *****
+        style.configure("TButton", padding=(15, 12)) # Padding aumentado
+        style.configure("Accent.TButton", padding=(15, 12)) # Padding aumentado
+        style.configure("TMenubutton", padding=(15, 12)) # Padding aumentado
+        # ******************************************************
+
         # Modelo de dados
         self.mealy_machine = MaquinaMealy()
         self.positions: Dict[str, Tuple[int, int]] = {}
@@ -80,7 +82,7 @@ class MealyGUI:
         self.transition_src = None
         self.dragging = None
         self.pinned_mode = "select"
-        
+
         self.mode_buttons: Dict[str, tk.Button] = {}
         self.icons: Dict[str, ImageTk.PhotoImage] = {}
 
@@ -126,7 +128,7 @@ class MealyGUI:
             # aconteceria se implementássemos zoom/pan como no outro editor.
             # Por enquanto, esta função serve como um placeholder para futuras melhorias.
             pass
-        
+
         # Redesenha para garantir que tudo esteja atualizado após o dimensionamento inicial
         self.draw_all()
 
@@ -157,7 +159,7 @@ class MealyGUI:
         ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
 
         ttk.Button(toolbar, text="Simulação Rápida", command=self.cmd_quick_simulate).pack(side=tk.LEFT, padx=2)
-        
+
         self.mode_label = ttk.Label(toolbar, text="Modo: Selecionar", font=("Helvetica", 11, "bold"))
         self.mode_label.pack(side=tk.RIGHT, padx=10)
 
@@ -169,13 +171,15 @@ class MealyGUI:
             img = enhancer.enhance(1.5)
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(1.1)
-            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            # ***** MODIFICAÇÃO: Aumenta o tamanho do ícone *****
+            img = img.resize((40, 40), Image.Resampling.LANCZOS) # Tamanho aumentado para 40x40
+            # ***************************************************
             self.icons[icon_name] = ImageTk.PhotoImage(img)
             button = ttk.Menubutton(parent, image=self.icons[icon_name])
         except FileNotFoundError:
             button = ttk.Menubutton(parent, text=tooltip_text)
             print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
-        
+
         button["menu"] = menu
         button.pack(side=tk.LEFT, padx=2)
         Tooltip(button, tooltip_text)
@@ -188,13 +192,15 @@ class MealyGUI:
             img = enhancer.enhance(1.5)
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(1.1)
-            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            # ***** MODIFICAÇÃO: Aumenta o tamanho do ícone *****
+            img = img.resize((40, 40), Image.Resampling.LANCZOS) # Tamanho aumentado para 40x40
+            # ***************************************************
             self.icons[icon_name] = ImageTk.PhotoImage(img)
             button = ttk.Button(parent, image=self.icons[icon_name], command=command)
         except FileNotFoundError:
             button = ttk.Button(parent, text=tooltip_text, command=command)
             print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
-        
+
         button.pack(side=tk.LEFT, padx=2)
         self.mode_buttons[icon_name] = button
         Tooltip(button, tooltip_text)
@@ -209,18 +215,20 @@ class MealyGUI:
     def _build_simulation_bar(self):
         bottom = tk.Frame(self.root)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
-        
+
         ttk.Label(bottom, text="Entrada para Simulação:", font=("Helvetica", 10)).pack(side=tk.LEFT)
-        self.input_entry = ttk.Entry(bottom, width=30)
-        self.input_entry.pack(side=tk.LEFT, padx=6)
-        
+        self.input_entry = ttk.Entry(bottom, width=30, font=("Helvetica", 11)) # Fonte um pouco maior na entrada
+        self.input_entry.pack(side=tk.LEFT, padx=6, ipady=5) # ipady para aumentar a altura da caixa de entrada
+
+        # ***** MODIFICAÇÃO: Botões de simulação agora usam o estilo ttk configurado *****
         ttk.Button(bottom, text="Simular", command=self.cmd_animate, style="Accent.TButton").pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Passo", command=self.cmd_step).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Play/Pausar", command=self.cmd_play_pause).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Reiniciar", command=self.cmd_reset_sim).pack(side=tk.LEFT, padx=2)
-        
+        # ********************************************************************************
+
         ttk.Separator(bottom, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
-        
+
         ttk.Label(bottom, text="Saída Gerada:", font=("Helvetica", 10)).pack(side=tk.LEFT)
         # Canvas para desenhar a fita de saída
         self.output_canvas = tk.Canvas(bottom, height=40, bg="white", highlightthickness=0)
@@ -337,9 +345,9 @@ class MealyGUI:
         if not self.mealy_machine.start_state:
             messagebox.showwarning("Simulação", "Defina um estado inicial antes de simular.", parent=self.root)
             return
-            
+
         output_str = self.mealy_machine.simulate(input_str)
-        
+
         if output_str is not None:
             messagebox.showinfo("Resultado da Simulação", f"Entrada: '{input_str}'\nSaída:    '{output_str}'", parent=self.root)
         else:
@@ -388,7 +396,7 @@ class MealyGUI:
                 if messagebox.askyesno("Excluir", f"Excluir estado {clicked_state}?", parent=self.root):
                     self._push_undo_snapshot()
                     self.mealy_machine.remove_state(clicked_state)
-                    if clicked_state in self.positions: del self.positions[clicked_state]                    
+                    if clicked_state in self.positions: del self.positions[clicked_state]
                     self._set_mode("select", pinned=True)
                     self.draw_all()
             return
@@ -398,7 +406,7 @@ class MealyGUI:
             self._set_mode("add_transition_dst", pinned=True)
             self.status.config(text=f"Origem {clicked_state} selecionada. Clique no destino.")
             return
-        
+
         if self.mode == "add_transition_dst" and clicked_state:
             src = self.transition_src
             dst = clicked_state
@@ -420,7 +428,7 @@ class MealyGUI:
             self._set_mode("select", pinned=True)
             self.draw_all()
             return
-            
+
         if clicked_state:
             self.dragging = (clicked_state, cx, cy)
 
@@ -433,11 +441,11 @@ class MealyGUI:
             self.positions[sid] = (x0 + dx, y0 + dy)
             self.dragging = (sid, cx, cy)
             self.draw_all()
-    
+
     def on_canvas_release(self, event):
         if self.dragging: self._push_undo_snapshot()
         self.dragging = None
-        
+
     def on_right_click(self, event):
         cx, cy = self._to_canvas(event.x, event.y)
         state = self._find_state_at(cx, cy)
@@ -469,7 +477,7 @@ class MealyGUI:
         menu.add_separator()
         menu.add_command(label="Excluir todas as transições", command=lambda: self._delete_edge(src, dst))
         menu.tk_popup(event.x_root, event.y_root)
-        
+
     def _set_start_state(self, state):
         self._push_undo_snapshot()
         self.mealy_machine.start_state = state
@@ -487,7 +495,7 @@ class MealyGUI:
         """Abre um diálogo para renomear um estado."""
         new_name = simpledialog.askstring("Renomear Estado", f"Digite o novo nome para '{old_name}':",
                                           initialvalue=old_name, parent=self.root)
-        
+
         if new_name and new_name != old_name:
             try:
                 self._push_undo_snapshot()
@@ -518,10 +526,10 @@ class MealyGUI:
             if s == src and d == dst:
                 current_labels.append(f"{inp}/{outp}")
                 transitions_to_edit.append(inp)
-        
+
         initial_value = ", ".join(current_labels)
-        new_label_str = simpledialog.askstring("Editar Transições", 
-            "Transições (formato 'in/out', separadas por vírgula):", 
+        new_label_str = simpledialog.askstring("Editar Transições",
+            "Transições (formato 'in/out', separadas por vírgula):",
             initialvalue=initial_value, parent=self.root)
 
         if new_label_str is not None:
@@ -576,14 +584,14 @@ class MealyGUI:
     def _draw_output_tape(self):
         """Desenha a fita de saída gerada no canvas."""
         self.output_canvas.delete("all")
-        
+
         # Pega a string de saída do passo atual do histórico
-        output_str = self.history[self.sim_step][1] if self.history and self.sim_step > 0 else ""
-        
+        output_str = self.history[self.sim_step][1] if self.history and self.sim_step >= 0 else "" # Adjusted index check
+
         cell_width = 35
         cell_height = 35
         # Centraliza verticalmente no canvas
-        y_pos = (self.output_canvas.winfo_height() / 2) - (cell_height / 2)
+        y_pos = (self.output_canvas.winfo_height() / 2) - (cell_height / 2) if self.output_canvas.winfo_height() > cell_height else 5
         x_pos = 10
 
         for char in output_str:
@@ -598,7 +606,7 @@ class MealyGUI:
     def draw_all(self):
         self.canvas.delete("all")
         self.edge_widgets.clear()
-        
+
         # Desenho das transições
         agg: DefaultDict[Tuple[str, str], List[str]] = DefaultDict(list)
         for (src, inp), (dst, outp) in self.mealy_machine.transitions.items():
@@ -609,7 +617,7 @@ class MealyGUI:
             x1, y1 = self._from_canvas(*self.positions[src])
             x2, y2 = self._from_canvas(*self.positions[dst])
             label_text = ", ".join(sorted(labels)).replace(EPSILON, "ε")
-            
+
             if src == dst:
                 p1 = (x1 - STATE_RADIUS * 0.7, y1 - STATE_RADIUS * 0.7)
                 c1 = (x1 - STATE_RADIUS * 1.5, y1 - STATE_RADIUS * 2.5)
@@ -634,7 +642,7 @@ class MealyGUI:
                 text_id = self.canvas.create_text(txt_x, txt_y, text=label_text, font=FONT)
                 self.edge_widgets[(src, dst)] = {"text_pos": self._to_canvas(txt_x, txt_y)}
                 self.canvas.tag_bind(text_id, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
-        
+
         # Desenho dos estados
         active_state = self.history[self.sim_step][0] if self.history else None
         for sid in sorted(list(self.mealy_machine.states)):
@@ -644,7 +652,7 @@ class MealyGUI:
             fill, outline, width = ("#e0f2fe", "#0284c7", 3) if is_active else ("white", "black", 2)
             self.canvas.create_oval(x-STATE_RADIUS*self.scale, y-STATE_RADIUS*self.scale, x+STATE_RADIUS*self.scale, y+STATE_RADIUS*self.scale, fill=fill, outline=outline, width=width)
             self.canvas.create_text(x, y, text=sid, font=FONT)
-        
+
         # Seta inicial
         if self.mealy_machine.start_state and self.mealy_machine.start_state in self.positions:
             sx_logic, sy_logic = self.positions[self.mealy_machine.start_state]
@@ -665,8 +673,8 @@ class MealyGUI:
     def cmd_animate(self):
         input_str = self.input_entry.get()
         self.history, final_output = self.mealy_machine.simulate_history(input_str)
-        
-        self.sim_step = 0
+
+        self.sim_step = 0 # Start from the initial state display
         self.sim_playing = False
         self.final_output_indicator = None # Limpa o indicador do canvas
         self.status.config(text=f"Iniciando simulação para a entrada '{input_str}'.")
@@ -684,7 +692,7 @@ class MealyGUI:
             self.status.config(text="Fim da simulação.")
             self.draw_all()
             return
-        
+
         self.sim_step += 1
         self.status.config(text=f"Processando passo {self.sim_step}...")
         self.draw_all()
@@ -693,7 +701,7 @@ class MealyGUI:
         if not self.history:
             self.status.config(text="Nenhuma simulação em andamento. Clique em 'Simular' primeiro.")
             return
-            
+
         self.sim_playing = not self.sim_playing
         self.status.config(text="Reproduzindo..." if self.sim_playing else "Pausado.")
         if self.sim_playing:
@@ -707,7 +715,7 @@ class MealyGUI:
             self.sim_playing = False
             self.cmd_step() # Executa o último passo para mostrar o resultado final
             self.status.config(text="Reprodução finalizada.")
-    
+
     def cmd_reset_sim(self):
         self.history = []
         self.sim_step = 0

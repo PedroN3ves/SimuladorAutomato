@@ -47,12 +47,14 @@ class MooreGUI:
         self.root = root
         root.title("Editor de Máquinas de Moore")
         root.state('zoomed')
-        
+
         style = ttk.Style()
-        style.configure("TButton", padding=(8, 6))
-        style.configure("Accent.TButton", padding=(8, 6))
-        style.configure("TMenubutton", padding=(8, 6))
-        
+        # ***** MODIFICAÇÃO: Aumenta o padding dos botões *****
+        style.configure("TButton", padding=(15, 12)) # Padding aumentado
+        style.configure("Accent.TButton", padding=(15, 12)) # Padding aumentado
+        style.configure("TMenubutton", padding=(15, 12)) # Padding aumentado
+        # ******************************************************
+
         self.moore_machine = MaquinaMoore()
         self.positions: Dict[str, Tuple[int, int]] = {}
         self.edge_widgets: Dict[Tuple[str, str], Dict] = {}
@@ -122,13 +124,15 @@ class MooreGUI:
             img = enhancer.enhance(1.5)
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(1.1)
-            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            # ***** MODIFICAÇÃO: Aumenta o tamanho do ícone *****
+            img = img.resize((40, 40), Image.Resampling.LANCZOS) # Tamanho aumentado para 40x40
+            # ***************************************************
             self.icons[icon_name] = ImageTk.PhotoImage(img)
             button = ttk.Menubutton(parent, image=self.icons[icon_name])
         except FileNotFoundError:
             button = ttk.Menubutton(parent, text=tooltip_text)
             print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
-        
+
         button["menu"] = menu
         button.pack(side=tk.LEFT, padx=2)
         Tooltip(button, tooltip_text)
@@ -141,13 +145,15 @@ class MooreGUI:
             img = enhancer.enhance(1.5)
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(1.1)
-            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            # ***** MODIFICAÇÃO: Aumenta o tamanho do ícone *****
+            img = img.resize((40, 40), Image.Resampling.LANCZOS) # Tamanho aumentado para 40x40
+            # ***************************************************
             self.icons[icon_name] = ImageTk.PhotoImage(img)
             button = ttk.Button(parent, image=self.icons[icon_name], command=command)
         except FileNotFoundError:
             button = ttk.Button(parent, text=tooltip_text, command=command)
             print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
-        
+
         button.pack(side=tk.LEFT, padx=2)
         self.mode_buttons[icon_name] = button
         Tooltip(button, tooltip_text)
@@ -163,12 +169,16 @@ class MooreGUI:
         bottom = tk.Frame(self.root)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
         ttk.Label(bottom, text="Entrada para Simulação:", font=("Helvetica", 10)).pack(side=tk.LEFT)
-        self.input_entry = ttk.Entry(bottom, width=30)
-        self.input_entry.pack(side=tk.LEFT, padx=6)
+        self.input_entry = ttk.Entry(bottom, width=30, font=("Helvetica", 11)) # Fonte um pouco maior
+        self.input_entry.pack(side=tk.LEFT, padx=6, ipady=5) # ipady para altura
+
+        # ***** MODIFICAÇÃO: Botões de simulação usam o estilo ttk *****
         ttk.Button(bottom, text="Simular", command=self.cmd_animate, style="Accent.TButton").pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Passo", command=self.cmd_step).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Play/Pausar", command=self.cmd_play_pause).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Reiniciar", command=self.cmd_reset_sim).pack(side=tk.LEFT, padx=2)
+        # ************************************************************
+
         ttk.Separator(bottom, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
         ttk.Label(bottom, text="Saída Gerada:", font=("Helvetica", 10)).pack(side=tk.LEFT)
         self.output_canvas = tk.Canvas(bottom, height=40, bg="white", highlightthickness=0)
@@ -300,7 +310,7 @@ class MooreGUI:
         if not self.moore_machine.start_state:
             messagebox.showwarning("Simular", "Defina um estado inicial.", parent=self.root)
             return
-        
+
         self.history, _ = self.moore_machine.simulate_history(input_str)
         self.sim_step = 0
         self.sim_playing = False
@@ -319,7 +329,7 @@ class MooreGUI:
             self.status.config(text="Fim da simulação.")
             self.draw_all()
             return
-        
+
         self.sim_step += 1
         self.status.config(text=f"Processando passo {self.sim_step}...")
         self.draw_all()
@@ -340,14 +350,17 @@ class MooreGUI:
 
     def on_canvas_click(self, event):
         x, y = event.x, event.y
-        clicked_state = self._find_state_at(x, y)
+        # ***** MODIFICAÇÃO: Usar coordenadas transformadas *****
+        cx, cy = self._to_canvas(x, y)
+        # ******************************************************
+        clicked_state = self._find_state_at(cx, cy) # Usar cx, cy
 
         if self.mode == "delete_state":
             if clicked_state:
                 if messagebox.askyesno("Excluir", f"Excluir estado {clicked_state}?", parent=self.root):
                     self._push_undo_snapshot()
                     self.moore_machine.remove_state(clicked_state)
-                    if clicked_state in self.positions: del self.positions[clicked_state]                    
+                    if clicked_state in self.positions: del self.positions[clicked_state]
                     self._set_mode("select", pinned=True)
                     self.draw_all()
             return
@@ -357,7 +370,7 @@ class MooreGUI:
             output_sym = simpledialog.askstring("Saída do Estado", "Símbolo de saída para o estado:", parent=self.root)
             if output_sym is not None:
                 self._push_undo_snapshot()
-                self.positions[state_name] = (x, y)
+                self.positions[state_name] = (cx, cy) # Usar cx, cy
                 self.moore_machine.add_state(state_name, output_sym)
                 self.draw_all()
             return
@@ -367,7 +380,7 @@ class MooreGUI:
             self._set_mode("add_transition_dst", pinned=True)
             self.status.config(text=f"Origem {clicked_state} selecionada. Clique no destino.")
             return
-        
+
         if self.mode == "add_transition_dst" and clicked_state:
             src, dst = self.transition_src, clicked_state
             inp = simpledialog.askstring("Transição", "Símbolo de entrada:", parent=self.root)
@@ -384,9 +397,9 @@ class MooreGUI:
             self._set_mode("select", pinned=True)
             self.draw_all()
             return
-            
+
         if clicked_state:
-            self.dragging = (clicked_state, x, y)
+            self.dragging = (clicked_state, cx, cy) # Usar cx, cy
 
     def on_canvas_drag(self, event):
         if self.dragging:
@@ -397,13 +410,16 @@ class MooreGUI:
             self.positions[sid] = (x0 + dx, y0 + dy)
             self.dragging = (sid, cx, cy)
             self.draw_all()
-    
+
     def on_canvas_release(self, event):
         if self.dragging: self._push_undo_snapshot()
         self.dragging = None
-        
+
     def on_right_click(self, event):
-        state = self._find_state_at(event.x, event.y)
+        # ***** MODIFICAÇÃO: Usar coordenadas transformadas *****
+        cx, cy = self._to_canvas(event.x, event.y)
+        # ******************************************************
+        state = self._find_state_at(cx, cy) # Usar cx, cy
         if state:
             self._show_state_context_menu(event, state)
 
@@ -422,7 +438,7 @@ class MooreGUI:
         menu.add_separator()
         menu.add_command(label=f"Excluir", command=lambda: self._delete_state(state))
         menu.tk_popup(event.x_root, event.y_root)
-        
+
     def _set_start_state(self, state):
         self._push_undo_snapshot()
         self.moore_machine.start_state = state
@@ -461,10 +477,10 @@ class MooreGUI:
         for (s, inp), d in self.moore_machine.transitions.items():
             if s == src and d == dst:
                 transitions_to_edit.append(inp)
-        
+
         initial_value = ", ".join(sorted(transitions_to_edit))
-        new_label_str = simpledialog.askstring("Editar Transições", 
-            "Símbolos de entrada (separados por vírgula):", 
+        new_label_str = simpledialog.askstring("Editar Transições",
+            "Símbolos de entrada (separados por vírgula):",
             initialvalue=initial_value, parent=self.root)
 
         if new_label_str is not None:
@@ -503,9 +519,9 @@ class MooreGUI:
 
     def _find_state_at(self, cx, cy):
         for sid, (sx, sy) in self.positions.items():
-            if math.hypot(sx - cx, sy - cy) <= STATE_RADIUS: return sid
+            if math.hypot(sx - cx, sy - cy) <= STATE_RADIUS: return sid # Use cx, cy
         return None
-    
+
     def _find_edge_at(self, cx, cy):
         """Encontra uma aresta (transição) nas coordenadas do canvas."""
         for (src, dst), info in self.edge_widgets.items():
@@ -520,12 +536,12 @@ class MooreGUI:
     def _draw_output_tape(self):
         """Desenha a fita de saída gerada no canvas."""
         self.output_canvas.delete("all")
-        
+
         output_str = self.history[self.sim_step][1] if self.history else ""
-        
+
         cell_width = 35
         cell_height = 35
-        y_pos = (self.output_canvas.winfo_height() / 2) - (cell_height / 2)
+        y_pos = (self.output_canvas.winfo_height() / 2) - (cell_height / 2) if self.output_canvas.winfo_height() > cell_height else 5
         x_pos = 10
 
         for char in output_str:
@@ -538,27 +554,29 @@ class MooreGUI:
     def draw_all(self):
         self.canvas.delete("all")
         self.edge_widgets.clear()
-        
-        # Lógica para destacar transição ativa
+
         active_state = self.history[self.sim_step][0] if self.history else None
         prev_state = self.history[self.sim_step - 1][0] if self.history and self.sim_step > 0 else None
-        input_char = self.input_entry.get()[self.sim_step - 1] if self.history and self.sim_step > 0 else None
+        input_char = self.input_entry.get()[self.sim_step - 1] if self.history and self.sim_step > 0 and len(self.input_entry.get()) >= self.sim_step else None
 
-        # Agrega transições
+
         agg: DefaultDict[Tuple[str, str], List[str]] = DefaultDict(list)
         for (src, inp), dst in self.moore_machine.transitions.items():
             agg[(src, dst)].append(inp)
 
         for (src, dst), labels in sorted(list(agg.items())):
             if src not in self.positions or dst not in self.positions: continue
-            x1, y1 = self._from_canvas(*self.positions[src])
-            x2, y2 = self._from_canvas(*self.positions[dst])
+            x1_logic, y1_logic = self.positions[src] # Use logic coords for positions
+            x2_logic, y2_logic = self.positions[dst]
+            x1, y1 = self._from_canvas(x1_logic, y1_logic) # Convert to view coords for drawing
+            x2, y2 = self._from_canvas(x2_logic, y2_logic)
+
             label_text = ", ".join(sorted(labels)).replace(EPSILON, "ε")
 
             is_active_transition = (src == prev_state and dst == active_state and input_char in labels)
             color = "#16a34a" if is_active_transition else "black"
             width = 3 if is_active_transition else 1.5
-            
+
             if src == dst:
                 r = STATE_RADIUS * self.scale
                 p1 = (x1 - r * 0.7, y1 - r * 0.7)
@@ -569,41 +587,44 @@ class MooreGUI:
                 tx, ty = x1, y1 - r * 2.3
                 text_id = self.canvas.create_text(tx, ty, text=label_text, font=FONT, fill=color)
                 self.canvas.tag_bind(text_id, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
-                self.edge_widgets[(src, dst)] = {"text_pos": self._to_canvas(tx, ty)}
+                # Store text position in LOGICAL coordinates
+                tx_logic, ty_logic = self._to_canvas(tx, ty)
+                self.edge_widgets[(src, dst)] = {"text_pos": (tx_logic, ty_logic)}
             else:
                 dx, dy = x2 - x1, y2 - y1; dist = math.hypot(dx, dy) or 1
                 ux, uy = dx/dist, dy/dist
                 bend = 0.25 if (dst, src) in agg else 0
-                offset = 15*self.scale if (dst,src) in agg else 0
+                offset = 15*self.scale if (dst,src) in agg else 0 # Use scaled offset
                 start_x, start_y = x1+ux*STATE_RADIUS*self.scale, y1+uy*STATE_RADIUS*self.scale
                 end_x, end_y = x2-ux*STATE_RADIUS*self.scale, y2-uy*STATE_RADIUS*self.scale
                 mid_x, mid_y = (start_x + end_x) / 2, (start_y + end_y) / 2
-                ctrl_x, ctrl_y = mid_x - uy*offset, mid_y + ux*offset
+                ctrl_x, ctrl_y = mid_x - uy*dist*bend, mid_y + ux*dist*bend # Bend control point relative to dist
                 self.canvas.create_line(start_x, start_y, ctrl_x, ctrl_y, end_x, end_y, smooth=True, width=width, arrow=tk.LAST, fill=color)
-                txt_x, txt_y = mid_x-uy*(offset+15), mid_y+ux*(offset+15)
+                text_offset_view = 15 # Text offset in view coordinates for visibility
+                txt_x, txt_y = ctrl_x - uy * text_offset_view, ctrl_y + ux * text_offset_view # Position text near control point
                 text_id = self.canvas.create_text(txt_x, txt_y, text=label_text, font=FONT, fill=color)
                 self.canvas.tag_bind(text_id, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
-                self.edge_widgets[(src, dst)] = {"text_pos": self._to_canvas(txt_x, txt_y)}
-        
-        # Desenha estados
+                # Store text position in LOGICAL coordinates
+                tx_logic, ty_logic = self._to_canvas(txt_x, txt_y)
+                self.edge_widgets[(src, dst)] = {"text_pos": (tx_logic, ty_logic)}
+
         for sid in sorted(list(self.moore_machine.states)):
             x_logic, y_logic = self.positions.get(sid, (100, 100))
             x, y = self._from_canvas(x_logic, y_logic)
             output_sym = self.moore_machine.output_function.get(sid, '?')
             state_label = f"{sid}\n—\n{output_sym}"
-            
+
             is_active = (sid == active_state)
             fill, outline, width = ("#e0f2fe", "#0284c7", 3) if is_active else ("white", "black", 2)
-            
+
             self.canvas.create_oval(x-STATE_RADIUS*self.scale, y-STATE_RADIUS*self.scale, x+STATE_RADIUS*self.scale, y+STATE_RADIUS*self.scale, fill=fill, outline=outline, width=width)
             self.canvas.create_text(x, y, text=state_label, font=FONT, justify=tk.CENTER)
-        
-        # Seta inicial
+
         if self.moore_machine.start_state and self.moore_machine.start_state in self.positions:
-            sx, sy = self._from_canvas(*self.positions[self.moore_machine.start_state])
+            sx_logic, sy_logic = self.positions[self.moore_machine.start_state] # Use logic coords
+            sx, sy = self._from_canvas(sx_logic, sy_logic) # Convert to view coords
             self.canvas.create_line(sx-STATE_RADIUS*2*self.scale, sy, sx-STATE_RADIUS*self.scale, sy, arrow=tk.LAST, width=2)
 
-        # Indicador de saída final
         if self.final_output_indicator is not None:
             color = "#059669" if self.final_output_indicator != "TRAVOU" else "#dc2626"
             text = f"Saída Final: {self.final_output_indicator}"

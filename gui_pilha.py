@@ -7,6 +7,7 @@ import math
 import tkinter as tk
 from tkinter import simpledialog, filedialog, messagebox, ttk
 from collections import defaultdict
+from typing import Dict, Tuple, List # Added missing import
 
 from PIL import Image, ImageTk, ImageEnhance
 from pilha import AutomatoPilha, EPSILON, snapshot_of_pda, restore_from_pda_snapshot
@@ -47,9 +48,9 @@ class PilhaGUI:
 
         # Estilo para aumentar o tamanho dos botões
         style = ttk.Style()
-        style.configure("TButton", padding=(8, 6))
-        style.configure("Accent.TButton", padding=(8, 6))
-        style.configure("TMenubutton", padding=(8, 6))
+        style.configure("TButton", padding=(15, 12)) # Padding aumentado
+        style.configure("Accent.TButton", padding=(15, 12)) # Padding aumentado
+        style.configure("TMenubutton", padding=(15, 12)) # Padding aumentado
 
         self.automato = AutomatoPilha()
         self.positions = {}
@@ -88,7 +89,7 @@ class PilhaGUI:
     def _build_toolbar(self):
         toolbar = tk.Frame(self.root)
         toolbar.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(5, 10))
-        
+
         # --- Menu Arquivo ---
         file_menu = tk.Menu(toolbar, tearoff=0)
         file_menu.add_command(label="Abrir...", command=self.cmd_open)
@@ -121,13 +122,13 @@ class PilhaGUI:
             img = enhancer.enhance(1.5)
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(1.1)
-            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            img = img.resize((40, 40), Image.Resampling.LANCZOS) # Ícone maior
             self.icons[icon_name] = ImageTk.PhotoImage(img)
             button = ttk.Menubutton(parent, image=self.icons[icon_name])
         except FileNotFoundError:
             button = ttk.Menubutton(parent, text=tooltip_text)
             print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
-        
+
         button["menu"] = menu
         button.pack(side=tk.LEFT, padx=2)
         Tooltip(button, tooltip_text)
@@ -140,13 +141,13 @@ class PilhaGUI:
             img = enhancer.enhance(1.5)
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(1.1)
-            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+            img = img.resize((40, 40), Image.Resampling.LANCZOS) # Ícone maior
             self.icons[icon_name] = ImageTk.PhotoImage(img)
             button = ttk.Button(parent, image=self.icons[icon_name], command=command)
         except FileNotFoundError:
             button = ttk.Button(parent, text=tooltip_text, command=command)
             print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
-        
+
         button.pack(side=tk.LEFT, padx=2)
         self.mode_buttons[icon_name] = button
         Tooltip(button, tooltip_text)
@@ -162,14 +163,14 @@ class PilhaGUI:
         bottom = tk.Frame(self.root)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
         ttk.Label(bottom, text="Entrada:", font=("Helvetica", 10)).pack(side=tk.LEFT)
-        self.input_entry = ttk.Entry(bottom, width=40)
-        self.input_entry.pack(side=tk.LEFT, padx=5)
+        self.input_entry = ttk.Entry(bottom, width=40, font=("Helvetica", 11))
+        self.input_entry.pack(side=tk.LEFT, padx=5, ipady=5)
+
         ttk.Button(bottom, text="Simular", command=self.cmd_start_simulation, style="Accent.TButton").pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Passo", command=self.cmd_step).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Play/Pausar", command=self.cmd_play_pause).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Reiniciar", command=self.cmd_reset_sim).pack(side=tk.LEFT, padx=2)
 
-        # Canvas para desenhar a pilha e a fita de entrada
         self.sim_display_canvas = tk.Canvas(bottom, height=60, bg="white", highlightthickness=0)
         self.sim_display_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
 
@@ -188,12 +189,12 @@ class PilhaGUI:
         self.canvas.bind("<Button-2>", self.on_middle_press)
         self.canvas.bind("<B2-Motion>", self.on_middle_drag)
         self.canvas.bind("<ButtonRelease-2>", self.on_middle_release)
+        self.canvas.bind("<Double-Button-1>", self.on_canvas_double_click)
         self.root.bind("<Control-z>", lambda e: self.undo())
         self.root.bind("<Control-y>", lambda e: self.redo())
 
 
     def _update_mode_button_styles(self):
-        # O estilo de destaque reflete o modo PINADO (fixo)
         for name, btn in self.mode_buttons.items():
             is_pinned = (name == self.pinned_mode.replace("_src", "").replace("_dst", ""))
             btn.config(style="Accent.TButton" if is_pinned else "TButton")
@@ -245,7 +246,6 @@ class PilhaGUI:
         self.status.config(text="Clique em um estado para excluí-lo.")
 
     def cmd_open(self):
-        """Abre um arquivo de Autômato de Pilha (.json)."""
         path = filedialog.askopenfilename(
             defaultextension=".json",
             filetypes=[("PDA Files", "*.json"), ("All files", "*.*")]
@@ -266,7 +266,6 @@ class PilhaGUI:
             messagebox.showerror("Erro ao Abrir", f"Não foi possível carregar o arquivo:\n{e}", parent=self.root)
 
     def cmd_save(self):
-        """Salva o autômato no arquivo atual. Se não houver, chama 'Salvar Como'."""
         if not self.current_filepath:
             self.cmd_save_as()
         else:
@@ -278,7 +277,6 @@ class PilhaGUI:
                 messagebox.showerror("Erro ao Salvar", f"Não foi possível salvar o arquivo:\n{e}", parent=self.root)
 
     def cmd_save_as(self):
-        """Abre um diálogo para salvar o autômato em um novo arquivo."""
         path = filedialog.asksaveasfilename(
             defaultextension=".json",
             filetypes=[("PDA Files", "*.json"), ("All files", "*.*")]
@@ -316,7 +314,7 @@ class PilhaGUI:
         if not self.automato.start_state:
             messagebox.showwarning("Simulação", "Defina um estado inicial.", parent=self.root)
             return
-        
+
         self.history, _ = self.automato.simulate_history(input_str)
         self.sim_step = 0
         self.sim_playing = False
@@ -328,7 +326,7 @@ class PilhaGUI:
         if not self.history:
             self.status.config(text="Nenhuma simulação em andamento.")
             return
-        
+
         if self.sim_step < len(self.history) - 1:
             self.sim_step += 1
             self.draw_all()
@@ -397,23 +395,25 @@ class PilhaGUI:
             self.status.config(text=f"Origem {clicked_state}. Clique no destino.")
         elif self.mode == "add_transition_dst" and clicked_state:
             src, dst = self.transition_src, clicked_state
-            label = simpledialog.askstring("Transição de Pilha", 
-                "Formato: 'entrada, desempilha / empilha'\n(Use & para vazio)",
+            label = simpledialog.askstring("Transição de Pilha",
+                "Formato: 'entrada, desempilha / empilha'\n(Use & ou ε para vazio)", # Updated hint
                 parent=self.root)
             if label and '/' in label:
                 try:
                     read_part, push_part = label.split('/', 1)
-                    input_sym, pop_sym = (read_part.split(',') + [EPSILON])[:2]
-                    push_syms = push_part.strip()
-                    
+                    input_sym, pop_sym = (read_part.split(',') + ['ε'])[:2] # Default pop to epsilon
+                    input_sym_final = input_sym.strip() if input_sym.strip() != 'ε' else EPSILON
+                    pop_sym_final = pop_sym.strip() if pop_sym.strip() != 'ε' else EPSILON
+                    push_syms_final = push_part.strip() if push_part.strip() != 'ε' else EPSILON
+
                     self._push_undo_snapshot()
-                    self.automato.add_transition(src, input_sym.strip(), pop_sym.strip(), dst, push_syms)
+                    self.automato.add_transition(src, input_sym_final, pop_sym_final, dst, push_syms_final)
                     self.draw_all()
                 except (ValueError, IndexError) as e:
                     messagebox.showerror("Erro de Formato", f"Formato de transição inválido. Use 'entrada, desempilha / empilha'.\n\nDetalhe: {e}", parent=self.root)
-            
-            self._set_mode("select", pinned=True) # Garante que o modo volte ao normal mesmo se o usuário cancelar ou errar
-        
+
+            self._set_mode("select", pinned=True)
+
         elif clicked_state:
             self.dragging = (clicked_state, cx, cy)
 
@@ -432,16 +432,28 @@ class PilhaGUI:
         self.dragging = None
 
     def on_right_click(self, event):
-        state = self._find_state_at(*self._to_canvas(event.x, event.y))
+        cx, cy = self._to_canvas(event.x, event.y)
+        state = self._find_state_at(cx, cy)
         if state:
             self._show_state_context_menu(event, state)
+        else:
+            edge = self._find_edge_at(cx, cy)
+            if edge:
+                self._show_edge_context_menu(event, edge[0], edge[1])
 
+    def _show_edge_context_menu(self, event, src, dst):
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Editar transições...", command=lambda: self._edit_edge(src, dst))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    # ***** CORREÇÃO: Mantido o método on_canvas_double_click *****
     def on_canvas_double_click(self, event):
         """Handles double-clicks on the canvas to edit transitions."""
         cx, cy = self._to_canvas(event.x, event.y)
         edge = self._find_edge_at(cx, cy)
         if edge:
             self._edit_edge(edge[0], edge[1])
+    # **********************************************************
 
     def _show_state_context_menu(self, event, state):
         menu = tk.Menu(self.root, tearoff=0)
@@ -458,10 +470,9 @@ class PilhaGUI:
         self.draw_all()
 
     def _rename_state_from_menu(self, old_name: str):
-        """Abre um diálogo para renomear um estado."""
         new_name = simpledialog.askstring("Renomear Estado", f"Digite o novo nome para '{old_name}':",
                                           initialvalue=old_name, parent=self.root)
-        
+
         if new_name and new_name != old_name:
             try:
                 self._push_undo_snapshot()
@@ -484,54 +495,147 @@ class PilhaGUI:
     def _delete_state_from_menu(self, state):
         if messagebox.askyesno("Excluir", f"Excluir o estado '{state}'?", parent=self.root):
             self._push_undo_snapshot()
-            # A lógica de remoção de transições associadas deve estar na classe do autômato
-            # self.automato.remove_state(state) 
+            self.automato.remove_state(state)
             if state in self.positions:
                 del self.positions[state]
-            # Temporariamente, apenas removemos da GUI. A lógica completa de remoção
-            # no modelo de dados precisa ser implementada em `pilha.py`.
-            # A função rename_state já faz a remoção correta, então vamos usar uma lógica similar
-            self.automato.remove_state(state) # Supondo que remove_state existe e funciona
-            self.automato.states.discard(state)
             self.draw_all()
 
     def _edit_edge(self, src: str, dst: str):
-        """Abre um diálogo para editar as transições entre dois estados."""
-        # Agrega todas as transições existentes entre src e dst
         current_labels = []
         for (s, inp, pop), transitions in self.automato.transitions.items():
             if s != src: continue
             for d, push in transitions:
                 if d == dst:
-                    # Usamos 'or EPSILON' para garantir que não haja strings vazias
                     current_labels.append(f"{inp or EPSILON},{pop or EPSILON}/{push or EPSILON}")
 
-        initial_value = "\n".join(current_labels)
-        new_labels_str = simpledialog.askstring("Editar Transições",
-            "Transições (uma por linha, formato: in, pop / push):",
-            initialvalue=initial_value, parent=self.root)
+        initial_value = "\n".join(sorted(current_labels))
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Editar Transições")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.geometry("400x300")
+
+        tk.Label(dialog, text=f"Transições de {src} para {dst} (uma por linha):\nFormato: 'entrada, desempilha / empilha' (use & ou ε para vazio)").pack(pady=5)
+
+        text_widget = tk.Text(dialog, wrap="word", height=10, width=45)
+        text_widget.pack(pady=5, padx=10, expand=True, fill="both")
+        text_widget.insert("1.0", initial_value.replace(EPSILON, "ε")) # Show ε in dialog
+
+        new_labels_str = None
+
+        def on_ok():
+            nonlocal new_labels_str
+            new_labels_str = text_widget.get("1.0", tk.END).strip()
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(pady=5)
+        ok_button = ttk.Button(button_frame, text="OK", command=on_ok)
+        ok_button.pack(side=tk.LEFT, padx=5)
+        cancel_button = ttk.Button(button_frame, text="Cancelar", command=on_cancel)
+        cancel_button.pack(side=tk.LEFT, padx=5)
+
+        dialog.wait_window()
 
         if new_labels_str is not None:
             self._push_undo_snapshot()
-            # 1. Remove todas as transições antigas entre src e dst
-            transitions_to_remove = []
-            for key, destinations in self.automato.transitions.items():
-                if key[0] == src:
-                    # Filtra os destinos que não são para 'dst'
-                    remaining_destinations = {d for d in destinations if d[0] != dst}
-                    if len(remaining_destinations) < len(destinations):
-                        transitions_to_remove.append((key, destinations - remaining_destinations))
-            
-            for key, to_remove in transitions_to_remove:
-                self.automato.transitions[key] -= to_remove
+            transitions_to_remove_keys = []
+            destinations_to_keep = defaultdict(set)
 
-            # Adiciona as novas transições
-            for label in [line.strip() for line in new_labels_str.split('\n') if line.strip()]:
+            # ***** CORREÇÃO: Iterar sobre cópia das chaves ou usar items() *****
+            # Iterar sobre items() é mais seguro ao modificar o dicionário
+            for key, destinations in list(self.automato.transitions.items()):
+            # *****************************************************************
+                 s_key, _, _ = key # Unpack key here
+                 if s_key == src:
+                     original_dest_count = len(destinations)
+                     kept_dests = {(d, p) for d, p in destinations if d != dst}
+                     if len(kept_dests) < original_dest_count:
+                         if kept_dests:
+                             destinations_to_keep[key] = kept_dests
+                         else:
+                             transitions_to_remove_keys.append(key)
+
+            for key in transitions_to_remove_keys:
+                if key in self.automato.transitions:
+                    del self.automato.transitions[key]
+
+            for key, kept_dests in destinations_to_keep.items():
+                 if key in self.automato.transitions:
+                    self.automato.transitions[key] = kept_dests
+
+
+            error_lines = []
+            for i, label in enumerate([line.strip() for line in new_labels_str.split('\n') if line.strip()]):
                 if '/' in label:
-                    read_part, push_part = label.split('/', 1)
-                    input_sym, pop_sym = (read_part.split(',') + [EPSILON])[:2]
-                    self.automato.add_transition(src, input_sym.strip(), pop_sym.strip(), dst, push_part.strip())
+                    try:
+                        read_part, push_part = label.split('/', 1)
+                        input_sym, pop_sym = (read_part.split(',') + ['ε'])[:2]
+                        input_sym_final = input_sym.strip() if input_sym.strip() != 'ε' else EPSILON
+                        pop_sym_final = pop_sym.strip() if pop_sym.strip() != 'ε' else EPSILON
+                        push_syms_final = push_part.strip() if push_part.strip() != 'ε' else EPSILON
+
+                        self.automato.add_transition(src, input_sym_final, pop_sym_final, dst, push_syms_final)
+                    except (ValueError, IndexError):
+                        error_lines.append(f"Linha {i+1}: '{label}'")
+                elif label:
+                     error_lines.append(f"Linha {i+1}: '{label}' (falta '/')")
+
+            if error_lines:
+                 messagebox.showwarning("Erro de Formato", "Algumas linhas tinham formato inválido e foram ignoradas:\n" + "\n".join(error_lines), parent=self.root)
+
             self.draw_all()
+
+    def _find_edge_at(self, cx, cy):
+        min_dist_sq = (20 / self.scale)**2
+        found_edge = None
+
+        agg = defaultdict(list)
+        for (src, inp, pop), transitions in self.automato.transitions.items():
+            for (dst, push) in transitions:
+                agg[(src, dst)].append(f"{inp or EPSILON},{pop or EPSILON}/{push or EPSILON}")
+
+        for (src, dst) in agg.keys():
+            if src not in self.positions or dst not in self.positions: continue
+            x1_logic, y1_logic = self.positions[src]
+            x2_logic, y2_logic = self.positions[dst]
+
+            if src == dst:
+                 r_logic = 24
+                 loop_tx = x1_logic
+                 loop_ty = y1_logic - r_logic * 1.8
+                 dist_sq = (cx - loop_tx)**2 + (cy - loop_ty)**2
+                 if dist_sq < min_dist_sq:
+                     found_edge = (src, dst)
+                     min_dist_sq = dist_sq
+            else:
+                dx_logic, dy_logic = x2_logic - x1_logic, y2_logic - y1_logic
+                dist_logic = math.hypot(dx_logic, dy_logic) or 1
+                ux_logic, uy_logic = dx_logic/dist_logic, dy_logic/dist_logic
+
+                bend = 0.25 if (dst, src) in agg else 0
+                start_x_logic = x1_logic + ux_logic * 24
+                start_y_logic = y1_logic + uy_logic * 24
+                end_x_logic = x2_logic - ux_logic * 24
+                end_y_logic = y2_logic - uy_logic * 24
+                mid_x_logic = (start_x_logic + end_x_logic) / 2
+                mid_y_logic = (start_y_logic + end_y_logic) / 2
+
+                ctrl_x_logic = mid_x_logic - uy_logic * dist_logic * bend
+                ctrl_y_logic = mid_y_logic + ux_logic * dist_logic * bend
+                text_offset_logic = 15 / self.scale
+
+                txt_x_logic = ctrl_x_logic - uy_logic * text_offset_logic
+                txt_y_logic = ctrl_y_logic + ux_logic * text_offset_logic
+
+                dist_sq = (cx - txt_x_logic)**2 + (cy - txt_y_logic)**2
+                if dist_sq < min_dist_sq:
+                    found_edge = (src, dst)
+                    min_dist_sq = dist_sq
+        return found_edge
 
     def _to_canvas(self, x, y):
         return (x - self.offset_x) / self.scale, (y - self.offset_y) / self.scale
@@ -559,7 +663,7 @@ class PilhaGUI:
 
     def _find_state_at(self, cx, cy):
         for sid, (sx, sy) in self.positions.items():
-            if math.hypot(cx - sx, cy - cy) <= 24:
+            if math.hypot(cx - sx, cy - sy) <= 24: # Use logical radius 24
                 return sid
         return None
 
@@ -577,106 +681,99 @@ class PilhaGUI:
 
     def draw_all(self):
         self.canvas.delete("all")
-        
-        # Desenha transições
         self._draw_simulation_display()
         self._draw_edges_and_states()
 
     def _draw_simulation_display(self):
-        """Desenha a pilha e a fita de entrada restante no canvas inferior."""
         canvas = self.sim_display_canvas
         canvas.delete("all")
-        
+
         if not self.history:
             return
 
-        _, rem_input, stack = self.history[self.sim_step]
+        current_sim_step = min(self.sim_step, len(self.history) - 1)
+        _, rem_input, stack = self.history[current_sim_step]
 
-        # 1. Desenha a Pilha
         canvas.create_text(10, 25, text="Pilha:", anchor="w", font=("Helvetica", 10, "bold"))
         x_pos = 60
         cell_width, cell_height = 30, 30
-        base_y = 50 # Linha de base para a pilha e a fita
-        
-        # Desenha a base da pilha
+        base_y = 50
+
         canvas.create_line(x_pos - 5, base_y, x_pos + 10 * cell_width, base_y, width=2)
 
-        for symbol in stack:
+        stack_to_draw = stack[-10:]
+        for symbol in stack_to_draw:
             canvas.create_rectangle(x_pos, base_y - cell_height, x_pos + cell_width, base_y, fill="#e0f2fe", outline="#7dd3fc")
-            canvas.create_text(x_pos + cell_width/2, base_y - cell_height/2, text=symbol, font=("Courier", 12, "bold"))
+            canvas.create_text(x_pos + cell_width/2, base_y - cell_height/2, text=symbol.replace(EPSILON, "ε"), font=("Courier", 12, "bold"))
             x_pos += cell_width
 
-        # 2. Desenha a Entrada Restante
         tape_start_x = x_pos + 50
         canvas.create_text(tape_start_x, 25, text="Entrada Restante:", anchor="w", font=("Helvetica", 10, "bold"))
-        
-        input_to_show = rem_input or "&"
+
+        input_to_show = rem_input or EPSILON
         x_pos = tape_start_x + 130
-        
-        # Cabeça de leitura
+
         canvas.create_polygon(x_pos + cell_width/2, base_y - cell_height - 5, x_pos + cell_width/2 - 5, base_y - cell_height - 15, x_pos + cell_width/2 + 5, base_y - cell_height - 15, fill="black")
 
-        for i, symbol in enumerate(input_to_show):
+        for i, symbol in enumerate(input_to_show[:15]):
             canvas.create_rectangle(x_pos, base_y - cell_height, x_pos + cell_width, base_y, fill="#f1f5f9", outline="#cbd5e1")
-            canvas.create_text(x_pos + cell_width/2, base_y - cell_height/2, text=symbol, font=("Courier", 12, "bold"))
+            canvas.create_text(x_pos + cell_width/2, base_y - cell_height/2, text=symbol.replace(EPSILON, "ε"), font=("Courier", 12, "bold"))
             x_pos += cell_width
 
     def _draw_edges_and_states(self):
-        """Desenha os estados e as transições no canvas principal."""
-        # Lógica para destacar transição ativa
-        active_state = self.history[self.sim_step][0] if self.history else None
-        prev_state = self.history[self.sim_step - 1][0] if self.history and self.sim_step > 0 else None
-        input_str = self.input_entry.get()
-        # Garante que o índice não saia do alcance da string de entrada
-        input_char = input_str[self.sim_step - 1] if self.history and self.sim_step > 0 and self.sim_step <= len(input_str) else None
+        active_state = self.history[min(self.sim_step, len(self.history)-1)][0] if self.history else None
 
         agg = defaultdict(list)
         for (src, inp, pop), transitions in self.automato.transitions.items():
             for (dst, push) in transitions:
-                label = f"{inp or EPSILON}, {pop or EPSILON} / {push or EPSILON}"
+                label = f"{inp.replace(EPSILON, 'ε')}, {pop.replace(EPSILON, 'ε')} / {push.replace(EPSILON, 'ε')}"
                 agg[(src, dst)].append(label)
 
+        # Draw Edges
         for (src, dst), labels in agg.items():
             if src not in self.positions or dst not in self.positions: continue
-            x1, y1 = self._from_canvas(*self.positions[src])
-            x2, y2 = self._from_canvas(*self.positions[dst])
+            x1_logic, y1_logic = self.positions[src]
+            x2_logic, y2_logic = self.positions[dst]
+            x1, y1 = self._from_canvas(x1_logic, y1_logic)
+            x2, y2 = self._from_canvas(x2_logic, y2_logic)
 
-            # Verifica se alguma das transições nesta aresta está ativa
-            is_active_transition = False
-            if src == prev_state and dst == active_state:
-                if any(f"{input_char or 'ε'}," in label for label in labels):
-                    is_active_transition = True
-            
-            color = "#16a34a" if is_active_transition else "black"
-            width = 3 if is_active_transition else 1.5
-            
-            display_labels = [label.replace(EPSILON, "ε") for label in labels]
-            
+            color = "black"
+            width = 1.5
+
+            display_labels = sorted(labels)
+
             if src == dst:
                 r = 24 * self.scale
-                self.canvas.create_line(x1 - r*0.5, y1 - r*0.8, x1 - r*1.2, y1 - r*1.6, x1 + r*1.2, y1 - r*1.6, x1 + r*0.5, y1 - r*0.8, smooth=True, arrow=tk.LAST, width=width, fill=color)
-                text_id = self.canvas.create_text(x1, y1 - r*1.8, text="\n".join(display_labels), fill=color, justify=tk.CENTER)
+                loop_radius_x = r * 1.2
+                loop_radius_y = r * 1.6
+                center_x = x1
+                center_y = y1 - loop_radius_y * 0.8
+                p1 = (x1 - r * 0.5, y1 - r * 0.8)
+                c1 = (center_x - loop_radius_x, center_y - loop_radius_y)
+                c2 = (center_x + loop_radius_x, center_y - loop_radius_y)
+                p2 = (x1 + r * 0.5, y1 - r * 0.8)
+                self.canvas.create_line(p1, c1, c2, p2, smooth=True, arrow=tk.LAST, width=width, fill=color)
+                text_id = self.canvas.create_text(center_x, center_y - loop_radius_y*0.9, text="\n".join(display_labels), fill=color, justify=tk.CENTER, font=("Helvetica", 9))
                 self.canvas.tag_bind(text_id, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
             else:
                 dx, dy = x2 - x1, y2 - y1
-                dist = math.hypot(dx, dy)
+                dist = math.hypot(dx, dy) or 1
                 ux, uy = dx/dist, dy/dist
-                
+
                 bend = 0.25 if (dst, src) in agg else 0
                 start_x, start_y = x1 + ux * 24 * self.scale, y1 + uy * 24 * self.scale
                 end_x, end_y = x2 - ux * 24 * self.scale, y2 - uy * 24 * self.scale
                 mid_x, mid_y = (start_x + end_x) / 2, (start_y + end_y) / 2
                 ctrl_x, ctrl_y = mid_x - uy*dist*bend, mid_y + ux*dist*bend
                 text_offset = 15
-                txt_x, txt_y = mid_x - uy*(dist*bend*self.scale + text_offset), mid_y + ux*(dist*bend*self.scale + text_offset)
+
+                txt_x, txt_y = ctrl_x - uy * text_offset, ctrl_y + ux * text_offset
 
                 self.canvas.create_line(start_x, start_y, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, width=width, fill=color)
-                text_id = self.canvas.create_text(txt_x, txt_y, text="\n".join(display_labels), fill=color, justify=tk.CENTER)
+                text_id = self.canvas.create_text(txt_x, txt_y, text="\n".join(display_labels), fill=color, justify=tk.CENTER, font=("Helvetica", 9))
                 self.canvas.tag_bind(text_id, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
-                agg[(src, dst)] = {"text_pos": self._to_canvas(txt_x, txt_y)}
 
-        # Desenha estados
-        
+        # Draw States
         for sid in sorted(list(self.automato.states)):
             if sid not in self.positions: continue
             x_logic, y_logic = self.positions[sid]
@@ -687,18 +784,17 @@ class PilhaGUI:
             is_active = (sid == active_state)
 
             fill, outline, width = ("#e0f2fe", "#0284c7", 3) if is_active else ("white", "black", 2)
-            
+
             self.canvas.create_oval(x-24*self.scale, y-24*self.scale, x+24*self.scale, y+24*self.scale, fill=fill, outline=outline, width=width)
             if is_final:
                 self.canvas.create_oval(x-20*self.scale, y-20*self.scale, x+20*self.scale, y+20*self.scale, outline="black", width=1)
             self.canvas.create_text(x, y, text=sid)
             if is_start:
                 self.canvas.create_line(x-48*self.scale, y, x-24*self.scale, y, arrow=tk.LAST)
-        
-        # Desenha o indicador de resultado final
+
         if self.result_indicator:
             color = "#16a34a" if self.result_indicator == "ACEITA" else "#dc2626"
-            self.canvas.create_text(self.canvas.winfo_width() - 10, 20, text=self.result_indicator, 
+            self.canvas.create_text(self.canvas.winfo_width() - 10, 20, text=self.result_indicator,
                                     font=("Helvetica", 16, "bold"), fill=color, anchor="ne")
 
     # --- Métodos de Undo/Redo ---
