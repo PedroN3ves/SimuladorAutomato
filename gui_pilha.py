@@ -7,14 +7,24 @@ import math
 import tkinter as tk
 from tkinter import simpledialog, filedialog, messagebox, ttk
 from collections import defaultdict
-from typing import Dict, Tuple, List # Added missing import
+from typing import Dict, Tuple, List, Set # Import Set
 
+# Importações de PIL
 from PIL import Image, ImageTk, ImageEnhance
+
+# Importações do módulo do autômato de pilha
 from pilha import AutomatoPilha, EPSILON, snapshot_of_pda, restore_from_pda_snapshot
 
-ANIM_MS = 500
+# --- CONSTANTES ---
+STATE_RADIUS = 24 # Raio visual dos estados
+FONT = ("Helvetica", 11) # Fonte padrão para textos nos estados e transições
+ANIM_MS = 500 # Milissegundos para animação da simulação
 
+# -------------------------
+# Classe Tooltip (Dica de Ferramenta)
+# -------------------------
 class Tooltip:
+    """ Cria um tooltip (dica de ferramenta) para um widget. """
     def __init__(self, widget, text):
         self.widget = widget
         self.text = text
@@ -23,6 +33,8 @@ class Tooltip:
         self.widget.bind("<Leave>", self.hide_tooltip)
 
     def show_tooltip(self, event):
+        """ Mostra a janela do tooltip perto do cursor. """
+        if not self.widget.winfo_exists(): return
         x = self.widget.winfo_pointerx() + 15
         y = self.widget.winfo_pointery() + 10
 
@@ -35,62 +47,98 @@ class Tooltip:
                        font=("tahoma", "8", "normal"))
         label.pack(ipadx=1)
 
-    def hide_tooltip(self, event):
-        if self.tooltip_window:
-            self.tooltip_window.destroy()
+    def hide_tooltip(self, event=None):
+        """ Esconde a janela do tooltip. """
+        tw = self.tooltip_window
         self.tooltip_window = None
+        if tw:
+            try: tw.destroy()
+            except tk.TclError: pass
 
+# -------------------------
+# Classe Principal da GUI para PDA
+# -------------------------
 class PilhaGUI:
+    """ Classe principal da interface gráfica para Autômatos de Pilha. """
     def __init__(self, root: tk.Toplevel):
         self.root = root
         root.title("Editor de Autômatos de Pilha")
-        root.state('zoomed')
+        try:
+            root.state('zoomed')
+        except tk.TclError:
+            root.geometry("1100x750")
 
-        # Estilo para aumentar o tamanho dos botões
+        # Estilo ttk
         style = ttk.Style()
-        style.configure("TButton", padding=(15, 12)) # Padding aumentado
-        style.configure("Accent.TButton", padding=(15, 12)) # Padding aumentado
-        style.configure("TMenubutton", padding=(15, 12)) # Padding aumentado
+        style.configure("TButton", padding=(15, 12))
+        style.configure("Accent.TButton", padding=(15, 12))
+        style.configure("TMenubutton", padding=(15, 12))
+        style.configure("Toolbutton", padding=(10, 8), relief="flat")
+        style.map("Toolbutton", background=[('active', '#e0e0e0')])
 
+        # Dados
         self.automato = AutomatoPilha()
-        self.positions = {}
+        self.positions: Dict[str, Tuple[int, int]] = {}
         self.mode = "select"
         self.dragging = None
-        self.mode_buttons = {}
+        self.mode_buttons: Dict[str, tk.Widget] = {}
         self.transition_src = None
         self.pinned_mode = "select"
-        self.icons = {}
+        self.icons: Dict[str, ImageTk.PhotoImage] = {}
+        self.edge_widgets: Dict[Tuple[str, str], Dict] = {}
 
         # Undo/Redo
         self.undo_stack: List[str] = []
         self.redo_stack: List[str] = []
 
         # Simulação
-        self.history = []
+        self.history: List[Tuple[str, str, Tuple]] = []
         self.sim_step = 0
         self.sim_playing = False
         self.result_indicator = None
 
-        # Transform (zoom/pan)
+        # Transformação (zoom/pan)
         self.scale = 1.0
         self.offset_x = 0
         self.offset_y = 0
         self.pan_last = None
         self.current_filepath = None
 
+        # Construção UI
         self._build_toolbar()
         self._build_canvas()
         self._build_bottom_bar()
         self._build_statusbar()
         self._bind_events()
+
+        self.root.after(100, self.center_view)
         self._push_undo_snapshot()
         self.draw_all()
 
+    def center_view(self):
+         """ Centraliza a visualização no canvas. """
+         if not self.positions:
+             try:
+                 canvas_width = self.canvas.winfo_width(); canvas_height = self.canvas.winfo_height()
+                 self.offset_x = canvas_width / 2 - (100 * self.scale)
+                 self.offset_y = canvas_height / 2 - (100 * self.scale)
+             except tk.TclError: self.offset_x, self.offset_y = 100, 100
+         elif self.positions:
+             avg_x = sum(p[0] for p in self.positions.values()) / len(self.positions)
+             avg_y = sum(p[1] for p in self.positions.values()) / len(self.positions)
+             try:
+                 canvas_width = self.canvas.winfo_width(); canvas_height = self.canvas.winfo_height()
+                 self.offset_x = canvas_width / 2 - (avg_x * self.scale)
+                 self.offset_y = canvas_height / 2 - (avg_y * self.scale)
+             except tk.TclError:
+                 self.offset_x = 100 - avg_x * self.scale; self.offset_y = 100 - avg_y * self.scale
+         self.draw_all()
+
     def _build_toolbar(self):
+        """ Constrói a barra de ferramentas superior. """
         toolbar = tk.Frame(self.root)
         toolbar.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(5, 10))
 
-        # --- Menu Arquivo ---
         file_menu = tk.Menu(toolbar, tearoff=0)
         file_menu.add_command(label="Abrir...", command=self.cmd_open)
         file_menu.add_command(label="Salvar", command=self.cmd_save)
@@ -103,8 +151,11 @@ class PilhaGUI:
         self._create_toolbar_button(toolbar, "definir_inicio", "Definir Início", self.cmd_set_start)
         self._create_toolbar_button(toolbar, "alternar_final", "Alternar Final", self.cmd_toggle_final)
         self._create_toolbar_button(toolbar, "excluir_estado", "Excluir Estado", self.cmd_delete_state_mode)
+        # --- NOVO BOTÃO ---
+        self._create_toolbar_button(toolbar, "excluir_transicao", "Excluir Transição", self.cmd_delete_transition_mode)
+        # ------------------
+        ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
 
-        # --- Menu Exportar ---
         export_menu = tk.Menu(toolbar, tearoff=0)
         export_menu.add_command(label="Exportar para TikZ (.tex)", command=self.cmd_export_tikz)
         export_menu.add_command(label="Exportar para SVG (.svg)", command=self.cmd_export_svg)
@@ -115,53 +166,49 @@ class PilhaGUI:
         self.mode_label.pack(side=tk.RIGHT, padx=10)
 
     def _create_toolbar_menubutton(self, parent, icon_name, tooltip_text, menu):
+        """ Cria um botão de menu na toolbar. """
         icon_path = os.path.join("icons", f"{icon_name}.png")
         try:
-            img = Image.open(icon_path)
-            enhancer = ImageEnhance.Color(img)
-            img = enhancer.enhance(1.5)
-            enhancer = ImageEnhance.Contrast(img)
-            img = enhancer.enhance(1.1)
-            img = img.resize((40, 40), Image.Resampling.LANCZOS) # Ícone maior
+            img = Image.open(icon_path).convert("RGBA")
+            img = img.resize((40, 40), Image.Resampling.LANCZOS)
             self.icons[icon_name] = ImageTk.PhotoImage(img)
-            button = ttk.Menubutton(parent, image=self.icons[icon_name])
-        except FileNotFoundError:
+            button = ttk.Menubutton(parent, image=self.icons[icon_name], style="Toolbutton")
+        except Exception as e:
+            print(f"Erro ao carregar ícone '{icon_path}': {e}. Usando texto.")
             button = ttk.Menubutton(parent, text=tooltip_text)
-            print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
-
         button["menu"] = menu
         button.pack(side=tk.LEFT, padx=2)
         Tooltip(button, tooltip_text)
+        self.mode_buttons[icon_name] = button
 
     def _create_toolbar_button(self, parent, icon_name, tooltip_text, command):
+        """ Cria um botão normal na toolbar. """
         icon_path = os.path.join("icons", f"{icon_name}.png")
         try:
-            img = Image.open(icon_path)
-            enhancer = ImageEnhance.Color(img)
-            img = enhancer.enhance(1.5)
-            enhancer = ImageEnhance.Contrast(img)
-            img = enhancer.enhance(1.1)
-            img = img.resize((40, 40), Image.Resampling.LANCZOS) # Ícone maior
+            img = Image.open(icon_path).convert("RGBA")
+            img = img.resize((40, 40), Image.Resampling.LANCZOS)
             self.icons[icon_name] = ImageTk.PhotoImage(img)
-            button = ttk.Button(parent, image=self.icons[icon_name], command=command)
-        except FileNotFoundError:
+            button = ttk.Button(parent, image=self.icons[icon_name], command=command, style="Toolbutton")
+        except Exception as e:
+            print(f"Erro ao carregar ícone '{icon_path}': {e}. Usando texto.")
             button = ttk.Button(parent, text=tooltip_text, command=command)
-            print(f"Aviso: Ícone não encontrado em '{icon_path}'. Usando texto.")
-
         button.pack(side=tk.LEFT, padx=2)
         self.mode_buttons[icon_name] = button
         Tooltip(button, tooltip_text)
+        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m, pinned=False))
+        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode, pinned=False))
 
-        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m))
-        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode))
 
     def _build_canvas(self):
+        """ Constrói o canvas principal. """
         self.canvas = tk.Canvas(self.root, bg="white")
         self.canvas.pack(fill=tk.BOTH, expand=True, padx=10, pady=0)
 
     def _build_bottom_bar(self):
+        """ Constrói a barra inferior com entrada e controles de simulação. """
         bottom = tk.Frame(self.root)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+
         ttk.Label(bottom, text="Entrada:", font=("Helvetica", 10)).pack(side=tk.LEFT)
         self.input_entry = ttk.Entry(bottom, width=40, font=("Helvetica", 11))
         self.input_entry.pack(side=tk.LEFT, padx=5, ipady=5)
@@ -171,14 +218,16 @@ class PilhaGUI:
         ttk.Button(bottom, text="Play/Pausar", command=self.cmd_play_pause).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Reiniciar", command=self.cmd_reset_sim).pack(side=tk.LEFT, padx=2)
 
-        self.sim_display_canvas = tk.Canvas(bottom, height=60, bg="white", highlightthickness=0)
+        self.sim_display_canvas = tk.Canvas(bottom, height=60, bg="#f0f0f0", highlightthickness=1, highlightbackground="#cccccc")
         self.sim_display_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
 
     def _build_statusbar(self):
-        self.status = tk.Label(self.root, text="Pronto", anchor="w", relief=tk.SUNKEN)
+        """ Constrói a barra de status. """
+        self.status = tk.Label(self.root, text="Pronto", anchor="w", relief=tk.SUNKEN, padx=5)
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
     def _bind_events(self):
+        """ Associa eventos a handlers. """
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
@@ -195,144 +244,116 @@ class PilhaGUI:
 
 
     def _update_mode_button_styles(self):
+        """ Atualiza estilo dos botões da toolbar baseado no modo pinado. """
         for name, btn in self.mode_buttons.items():
-            is_pinned = (name == self.pinned_mode.replace("_src", "").replace("_dst", ""))
-            btn.config(style="Accent.TButton" if is_pinned else "TButton")
+            base_name = name.replace("_src", "").replace("_dst", "")
+            is_pinned = (base_name == self.pinned_mode.replace("_src", "").replace("_dst", ""))
+            if isinstance(btn, (ttk.Button, ttk.Menubutton)):
+                 btn.config(style="Accent.TButton" if is_pinned else "TButton")
+
 
     def _set_mode(self, new_mode, pinned=False):
+        """ Define o modo de operação e atualiza UI. """
         if pinned:
-            self.pinned_mode = new_mode
-
+            if self.pinned_mode == new_mode: self.pinned_mode = "select"; new_mode = "select"
+            else: self.pinned_mode = new_mode
         self.mode = new_mode
-        cursor_map = {
-            "add_state": "crosshair",
-            "add_transition_src": "hand2",
-            "add_transition_dst": "hand2",
-            "set_start": "hand2",
-            "toggle_final": "hand2",
-            "delete_state": "X_cursor",
+
+        cursor_map = { # Cursor do mouse
+            "add_state": "crosshair", "add_transition_src": "hand2",
+            "add_transition_dst": "hand2", "set_start": "hand2",
+            "toggle_final": "hand2", "delete_state": "X_cursor",
+            "delete_transition": "X_cursor" # Novo
         }
-        self.canvas.config(cursor=cursor_map.get(new_mode, "arrow"))
-        mode_text_map = {
-            "select": "Modo: Selecionar",
-            "add_state": "Modo: Adicionar Estado",
+        mode_text_map = { # Texto do rótulo
+            "select": "Modo: Selecionar", "add_state": "Modo: Adicionar Estado",
             "add_transition_src": "Modo: Adicionar Transição (Origem)",
             "add_transition_dst": "Modo: Adicionar Transição (Destino)",
-            "set_start": "Modo: Definir Início",
-            "toggle_final": "Modo: Alternar Final",
+            "set_start": "Modo: Definir Início", "toggle_final": "Modo: Alternar Final",
             "delete_state": "Modo: Excluir Estado",
+            "delete_transition": "Modo: Excluir Transição" # Novo
         }
-        self.mode_label.config(text=mode_text_map.get(new_mode, "Modo: Selecionar"))
+        self.canvas.config(cursor=cursor_map.get(self.mode, "arrow"))
+        self.mode_label.config(text=mode_text_map.get(self.mode, "Modo: Selecionar"))
         self._update_mode_button_styles()
 
-    def cmd_add_state(self):
-        self._set_mode("add_state", pinned=True)
-        self.status.config(text="Clique no canvas para adicionar um estado.")
 
-    def cmd_add_transition(self):
-        self._set_mode("add_transition_src", pinned=True)
-        self.status.config(text="Clique no estado de origem.")
+    # --- Comandos Botões ---
+    def cmd_add_state(self): self._set_mode("add_state", pinned=True); self.status.config(text="Clique no canvas para adicionar estado.")
+    def cmd_add_transition(self): self._set_mode("add_transition_src", pinned=True); self.transition_src=None; self.status.config(text="Clique no estado de origem.")
+    def cmd_set_start(self): self._set_mode("set_start", pinned=True); self.status.config(text="Clique no estado inicial.")
+    def cmd_toggle_final(self): self._set_mode("toggle_final", pinned=True); self.status.config(text="Clique no estado para alternar final/não final.")
+    def cmd_delete_state_mode(self): self._set_mode("delete_state", pinned=True); self.status.config(text="Clique em um estado para excluí-lo.")
+    # --- NOVO COMANDO ---
+    def cmd_delete_transition_mode(self): self._set_mode("delete_transition", pinned=True); self.status.config(text="Clique no rótulo de uma transição para excluí-la.")
+    # ------------------
 
-    def cmd_set_start(self):
-        self._set_mode("set_start", pinned=True)
-        self.status.config(text="Clique em um estado para torná-lo inicial.")
-
-    def cmd_toggle_final(self):
-        self._set_mode("toggle_final", pinned=True)
-        self.status.config(text="Clique em um estado para alternar seu status de final.")
-
-    def cmd_delete_state_mode(self):
-        self._set_mode("delete_state", pinned=True)
-        self.status.config(text="Clique em um estado para excluí-lo.")
-
+    # --- Comandos Arquivo/Exportar ---
     def cmd_open(self):
-        path = filedialog.askopenfilename(
-            defaultextension=".json",
-            filetypes=[("PDA Files", "*.json"), ("All files", "*.*")]
-        )
-        if not path:
-            return
+        path = filedialog.askopenfilename(defaultextension=".json", filetypes=[("PDA Files", "*.json"), ("All", "*.*")])
+        if not path: return
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                snapshot = f.read()
+            with open(path, "r", encoding="utf-8") as f: snapshot = f.read()
             self.automato, self.positions = restore_from_pda_snapshot(snapshot)
-            self.current_filepath = path
-            self.undo_stack = [snapshot]
-            self.redo_stack.clear()
-            self.root.title(f"Editor de Autômatos de Pilha — {self.current_filepath}")
-            self.draw_all()
-            self.status.config(text=f"Arquivo '{path}' carregado com sucesso.")
-        except Exception as e:
-            messagebox.showerror("Erro ao Abrir", f"Não foi possível carregar o arquivo:\n{e}", parent=self.root)
+            self.current_filepath = path; self.root.title(f"Editor PDA - {path}")
+            self.undo_stack = [snapshot]; self.redo_stack.clear()
+            self.draw_all(); self.center_view()
+            self.status.config(text=f"Arquivo '{os.path.basename(path)}' carregado.")
+        except Exception as e: messagebox.showerror("Erro Abrir", f"Falha:\n{e}", parent=self.root)
 
     def cmd_save(self):
-        if not self.current_filepath:
-            self.cmd_save_as()
+        if not self.current_filepath: self.cmd_save_as()
         else:
             try:
-                with open(self.current_filepath, "w", encoding="utf-8") as f:
-                    f.write(snapshot_of_pda(self.automato, self.positions))
-                self.status.config(text=f"Arquivo salvo em '{self.current_filepath}'.")
-            except Exception as e:
-                messagebox.showerror("Erro ao Salvar", f"Não foi possível salvar o arquivo:\n{e}", parent=self.root)
+                self._push_undo_snapshot()
+                if self.undo_stack:
+                     with open(self.current_filepath, "w", encoding="utf-8") as f: f.write(self.undo_stack[-1])
+                     self.status.config(text=f"Salvo em '{os.path.basename(self.current_filepath)}'.")
+            except Exception as e: messagebox.showerror("Erro Salvar", f"Falha:\n{e}", parent=self.root)
 
     def cmd_save_as(self):
-        path = filedialog.asksaveasfilename(
-            defaultextension=".json",
-            filetypes=[("PDA Files", "*.json"), ("All files", "*.*")]
-        )
-        if not path:
-            return
-        self.current_filepath = path
-        self.root.title(f"Editor de Autômatos de Pilha — {self.current_filepath}")
+        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("PDA Files", "*.json"), ("All", "*.*")])
+        if not path: return
+        self.current_filepath = path; self.root.title(f"Editor PDA - {path}")
         self.cmd_save()
 
-    def cmd_export_tikz(self):
-        messagebox.showinfo("Exportar", "A exportação para TikZ ainda não foi implementada para Autômatos de Pilha.", parent=self.root)
-
+    def cmd_export_tikz(self): messagebox.showinfo("Exportar", "Exportação TikZ não implementada para PDA.", parent=self.root)
     def cmd_export_svg(self):
-        path = filedialog.asksaveasfilename(defaultextension=".svg", filetypes=[("SVG files", "*.svg")])
+        path = filedialog.asksaveasfilename(defaultextension=".svg", filetypes=[("SVG", "*.svg")])
         if path:
-            with open(path, "w", encoding="utf-8") as f: f.write(self._generate_svg_text())
-            messagebox.showinfo("Exportar", f"SVG exportado para {path}", parent=self.root)
+            try:
+                with open(path, "w", encoding="utf-8") as f: f.write(self._generate_svg_text())
+                messagebox.showinfo("Exportar", f"SVG exportado para {path}", parent=self.root)
+            except Exception as e: messagebox.showerror("Erro SVG", f"Falha:\n{e}", parent=self.root)
 
     def cmd_export_png(self):
-        path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG files", "*.png")])
+        path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])
         if not path: return
-        svg_text = self._generate_svg_text()
+        svg = self._generate_svg_text()
         try:
             import cairosvg
-            cairosvg.svg2png(bytestring=svg_text.encode('utf-8'), write_to=path)
+            cairosvg.svg2png(bytestring=svg.encode('utf-8'), write_to=path)
             messagebox.showinfo("Exportar PNG", f"PNG salvo em {path}", parent=self.root)
-        except ImportError:
-            messagebox.showwarning("Exportar PNG", "A biblioteca 'cairosvg' não está instalada.\nPara exportar para PNG, instale com: pip install cairosvg", parent=self.root)
-        except Exception as e:
-            messagebox.showerror("Exportar PNG", f"Ocorreu um erro: {e}", parent=self.root)
+        except ImportError: messagebox.showwarning("Exportar PNG", "'cairosvg' não instalado.\nUse: pip install cairosvg", parent=self.root)
+        except Exception as e: messagebox.showerror("Erro PNG", f"Falha:\n{e}", parent=self.root)
 
+    def _generate_svg_text(self): return '<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"></svg>' # Placeholder
+
+    # --- Comandos Simulação ---
     def cmd_start_simulation(self):
         input_str = self.input_entry.get()
-        if not self.automato.start_state:
-            messagebox.showwarning("Simulação", "Defina um estado inicial.", parent=self.root)
-            return
-
+        if not self.automato.start_state: messagebox.showwarning("Simulação", "Defina estado inicial.", parent=self.root); return
         self.history, _ = self.automato.simulate_history(input_str)
-        self.sim_step = 0
-        self.sim_playing = False
-        self.result_indicator = None
-        self.draw_all()
-        self.status.config(text=f"Simulação iniciada para '{input_str}'.")
+        self.sim_step = 0; self.sim_playing = False; self.result_indicator = None
+        self.draw_all(); self.status.config(f"Simulação iniciada para '{input_str}'.")
 
     def cmd_step(self):
-        if not self.history:
-            self.status.config(text="Nenhuma simulação em andamento.")
-            return
-
+        if not self.history: self.status.config(text="Nenhuma simulação ativa."); return
         if self.sim_step < len(self.history) - 1:
-            self.sim_step += 1
-            self.draw_all()
+            self.sim_step += 1; self.draw_all()
+            self.status.config(text=f"Passo {self.sim_step}...")
         else:
             self.status.config(text="Fim da simulação.")
-            # Mostra o resultado final
             _, accepted = self.automato.simulate_history(self.input_entry.get())
             self.result_indicator = "ACEITA" if accepted else "REJEITADA"
             self.draw_all()
@@ -342,90 +363,90 @@ class PilhaGUI:
         self.sim_playing = not self.sim_playing
         if self.sim_playing:
             self.status.config(text="Reproduzindo...")
+            if self.sim_step >= len(self.history) - 1: self.cmd_start_simulation()
             self._playback_step()
-        else:
-            self.status.config(text="Pausado.")
+        else: self.status.config(text="Pausado.")
 
     def _playback_step(self):
         if self.sim_playing and self.sim_step < len(self.history) - 1:
-            self.cmd_step()
-            self.root.after(ANIM_MS, self._playback_step)
-        else:
-            # Se a reprodução terminou, executa o último passo para mostrar o resultado
-            self.sim_playing = False
-            if self.sim_step >= len(self.history) -1:
-                self.cmd_step() # Executa o último passo para mostrar o resultado
+            self.cmd_step(); self.root.after(ANIM_MS, self._playback_step)
+        elif self.sim_playing:
+            self.sim_playing = False; self.cmd_step()
+            self.status.config(text="Reprodução finalizada.")
 
+    def cmd_reset_sim(self):
+        self.history = []; self.sim_step = 0; self.sim_playing = False; self.result_indicator = None
+        self.draw_all(); self.status.config(text="Simulação reiniciada.")
+
+    # --- Handlers Eventos Canvas ---
     def on_canvas_click(self, event):
         cx, cy = self._to_canvas(event.x, event.y)
         clicked_state = self._find_state_at(cx, cy)
+        clicked_edge = self._find_edge_at(cx, cy)
 
-        if self.mode == "delete_state":
-            if clicked_state:
-                if messagebox.askyesno("Excluir", f"Excluir estado {clicked_state}?", parent=self.root):
-                    self._push_undo_snapshot()
-                    self.automato.remove_state(clicked_state)
-                    if clicked_state in self.positions: del self.positions[clicked_state]
-                    self._set_mode("select", pinned=True)
-                    self.draw_all()
+        # --- EXCLUIR TRANSIÇÃO ---
+        if self.mode == "delete_transition":
+            if clicked_edge: self._delete_edge(*clicked_edge); self._set_mode("select", pinned=True)
+            else: self.status.config(text="Clique no rótulo de uma transição.")
             return
+        # -------------------------
 
         if self.mode == "add_state":
-            state_name = f"q{len(self.automato.states)}"
+            s_name = f"q{len(self.automato.states)}"
+            self._push_undo_snapshot(); self.automato.add_state(s_name); self.positions[s_name] = (cx, cy); self.draw_all()
+            self.status.config(text=f"Estado '{s_name}' adicionado.")
+            return # Permite adicionar mais
+
+        if self.mode == "set_start" and clicked_state:
+            self._push_undo_snapshot(); self.automato.start_state = clicked_state; self._set_mode("select", pinned=True); self.draw_all()
+            self.status.config(text=f"'{clicked_state}' definido como inicial.")
+            return
+
+        if self.mode == "toggle_final" and clicked_state:
             self._push_undo_snapshot()
-            self.automato.add_state(state_name)
-            self.positions[state_name] = (cx, cy)
-            self.draw_all()
-        elif self.mode == "set_start" and clicked_state:
-            self._push_undo_snapshot()
-            self.automato.start_state = clicked_state
-            self._set_mode("select", pinned=True)
-            self.draw_all()
-        elif self.mode == "toggle_final" and clicked_state:
-            self._push_undo_snapshot()
-            if clicked_state in self.automato.final_states:
-                self.automato.final_states.remove(clicked_state)
-            else:
-                self.automato.final_states.add(clicked_state)
-            self._set_mode("select", pinned=True)
-            self.draw_all()
-        elif self.mode == "add_transition_src" and clicked_state:
-            self.transition_src = clicked_state
-            self._set_mode("add_transition_dst", pinned=True)
+            if clicked_state in self.automato.final_states: self.automato.final_states.remove(clicked_state)
+            else: self.automato.final_states.add(clicked_state)
+            self._set_mode("select", pinned=True); self.draw_all(); self.status.config(text=f"Estado final '{clicked_state}' alternado.")
+            return
+
+        if self.mode == "delete_state":
+            if clicked_state and messagebox.askyesno("Excluir", f"Excluir estado '{clicked_state}'?", parent=self.root):
+                self._push_undo_snapshot(); self.automato.remove_state(clicked_state)
+                if clicked_state in self.positions: del self.positions[clicked_state]
+                self._set_mode("select", pinned=True); self.draw_all(); self.status.config(text=f"Estado '{clicked_state}' excluído.")
+            return
+
+        if self.mode == "add_transition_src" and clicked_state:
+            self.transition_src = clicked_state; self._set_mode("add_transition_dst", pinned=True)
             self.status.config(text=f"Origem {clicked_state}. Clique no destino.")
-        elif self.mode == "add_transition_dst" and clicked_state:
+            return
+
+        if self.mode == "add_transition_dst" and clicked_state:
             src, dst = self.transition_src, clicked_state
-            label = simpledialog.askstring("Transição de Pilha",
-                "Formato: 'entrada, desempilha / empilha'\n(Use & ou ε para vazio)", # Updated hint
-                parent=self.root)
-            if label and '/' in label:
+            label = simpledialog.askstring("Transição de Pilha", "Formato: 'entrada, desempilha / empilha'\n(Use & ou ε para vazio)", parent=self.root)
+            if label:
                 try:
                     read_part, push_part = label.split('/', 1)
-                    input_sym, pop_sym = (read_part.split(',') + ['ε'])[:2] # Default pop to epsilon
-                    input_sym_final = input_sym.strip() if input_sym.strip() != 'ε' else EPSILON
-                    pop_sym_final = pop_sym.strip() if pop_sym.strip() != 'ε' else EPSILON
-                    push_syms_final = push_part.strip() if push_part.strip() != 'ε' else EPSILON
+                    parts = read_part.split(',', 1)
+                    input_sym = parts[0].strip(); pop_sym = parts[1].strip() if len(parts) > 1 else EPSILON
+                    input_final = input_sym.replace('ε', EPSILON) or EPSILON
+                    pop_final = pop_sym.replace('ε', EPSILON) or EPSILON
+                    push_final = push_part.strip().replace('ε', EPSILON) or EPSILON
+                    self._push_undo_snapshot(); self.automato.add_transition(src, input_final, pop_final, dst, push_final); self.draw_all()
+                    self.status.config(text=f"Transição {src} -> {dst} adicionada.")
+                except (ValueError, IndexError) as e: messagebox.showerror("Erro Formato", f"Formato inválido.\nDetalhe: {e}", parent=self.root)
+            else: self.status.config(text="Adição cancelada.")
+            self._set_mode("select", pinned=True); self.transition_src = None
+            return
 
-                    self._push_undo_snapshot()
-                    self.automato.add_transition(src, input_sym_final, pop_sym_final, dst, push_syms_final)
-                    self.draw_all()
-                except (ValueError, IndexError) as e:
-                    messagebox.showerror("Erro de Formato", f"Formato de transição inválido. Use 'entrada, desempilha / empilha'.\n\nDetalhe: {e}", parent=self.root)
-
-            self._set_mode("select", pinned=True)
-
-        elif clicked_state:
-            self.dragging = (clicked_state, cx, cy)
+        if clicked_state: self.dragging = (clicked_state, cx, cy)
+        else: self.dragging = None
 
     def on_canvas_drag(self, event):
         if self.dragging:
-            sid, ox, oy = self.dragging
-            cx, cy = self._to_canvas(event.x, event.y)
-            dx, dy = cx - ox, cy - oy
-            x0, y0 = self.positions.get(sid, (0, 0))
-            self.positions[sid] = (x0 + dx, y0 + dy)
-            self.dragging = (sid, cx, cy)
-            self.draw_all()
+            sid, ox, oy = self.dragging; cx, cy = self._to_canvas(event.x, event.y)
+            dx, dy = cx - ox, cy - oy; x0, y0 = self.positions.get(sid, (cx, cy))
+            self.positions[sid] = (x0 + dx, y0 + dy); self.dragging = (sid, cx, cy); self.draw_all()
 
     def on_canvas_release(self, event):
         if self.dragging: self._push_undo_snapshot()
@@ -434,222 +455,135 @@ class PilhaGUI:
     def on_right_click(self, event):
         cx, cy = self._to_canvas(event.x, event.y)
         state = self._find_state_at(cx, cy)
-        if state:
-            self._show_state_context_menu(event, state)
-        else:
-            edge = self._find_edge_at(cx, cy)
-            if edge:
-                self._show_edge_context_menu(event, edge[0], edge[1])
+        if state: self._show_state_context_menu(event, state); return
+        edge = self._find_edge_at(cx, cy)
+        if edge: self._show_edge_context_menu(event, *edge)
+
+    def on_canvas_double_click(self, event):
+        cx, cy = self._to_canvas(event.x, event.y)
+        edge = self._find_edge_at(cx, cy)
+        if edge: self._edit_edge(*edge)
+
+    # --- Menus Contexto ---
+    def _show_state_context_menu(self, event, state):
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Definir como inicial", command=lambda s=state: self._set_start_from_menu(s))
+        menu.add_command(label="Alternar final", command=lambda s=state: self._toggle_final_from_menu(s))
+        menu.add_command(label="Renomear", command=lambda s=state: self._rename_state_from_menu(s))
+        menu.add_separator()
+        menu.add_command(label="Excluir", command=lambda s=state: self._delete_state_from_menu(s))
+        menu.tk_popup(event.x_root, event.y_root)
 
     def _show_edge_context_menu(self, event, src, dst):
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Editar transições...", command=lambda: self._edit_edge(src, dst))
-        menu.tk_popup(event.x_root, event.y_root)
-
-    # ***** CORREÇÃO: Mantido o método on_canvas_double_click *****
-    def on_canvas_double_click(self, event):
-        """Handles double-clicks on the canvas to edit transitions."""
-        cx, cy = self._to_canvas(event.x, event.y)
-        edge = self._find_edge_at(cx, cy)
-        if edge:
-            self._edit_edge(edge[0], edge[1])
-    # **********************************************************
-
-    def _show_state_context_menu(self, event, state):
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Definir como inicial", command=lambda: self._set_start_from_menu(state))
-        menu.add_command(label="Alternar final", command=lambda: self._toggle_final_from_menu(state))
-        menu.add_command(label="Renomear", command=lambda: self._rename_state_from_menu(state))
+        menu.add_command(label="Editar transições...", command=lambda s=src, d=dst: self._edit_edge(s, d))
         menu.add_separator()
-        menu.add_command(label="Excluir", command=lambda: self._delete_state_from_menu(state))
+        # --- NOVO ITEM MENU ---
+        menu.add_command(label="Excluir todas as transições", command=lambda s=src, d=dst: self._delete_edge(s, d))
+        # ----------------------
         menu.tk_popup(event.x_root, event.y_root)
 
-    def _set_start_from_menu(self, state):
-        self._push_undo_snapshot()
-        self.automato.start_state = state
-        self.draw_all()
-
-    def _rename_state_from_menu(self, old_name: str):
-        new_name = simpledialog.askstring("Renomear Estado", f"Digite o novo nome para '{old_name}':",
-                                          initialvalue=old_name, parent=self.root)
-
-        if new_name and new_name != old_name:
-            try:
-                self._push_undo_snapshot()
-                self.automato.rename_state(old_name, new_name)
-                self.positions[new_name] = self.positions.pop(old_name)
-                self.draw_all()
-                self.status.config(text=f"Estado '{old_name}' renomeado para '{new_name}'.")
-            except ValueError as e:
-                messagebox.showerror("Erro ao Renomear", str(e), parent=self.root)
-                self.undo()
-
+    # --- Ações Menu Contexto ---
+    def _set_start_from_menu(self, state): self._push_undo_snapshot(); self.automato.start_state = state; self.draw_all(); self.status.config(text=f"'{state}' é inicial.")
     def _toggle_final_from_menu(self, state):
         self._push_undo_snapshot()
-        if state in self.automato.final_states:
-            self.automato.final_states.remove(state)
-        else:
-            self.automato.final_states.add(state)
-        self.draw_all()
+        if state in self.automato.final_states: self.automato.final_states.remove(state)
+        else: self.automato.final_states.add(state)
+        self.draw_all(); self.status.config(text=f"Estado final '{state}' alternado.")
 
     def _delete_state_from_menu(self, state):
-        if messagebox.askyesno("Excluir", f"Excluir o estado '{state}'?", parent=self.root):
-            self._push_undo_snapshot()
-            self.automato.remove_state(state)
-            if state in self.positions:
-                del self.positions[state]
-            self.draw_all()
+        if messagebox.askyesno("Excluir", f"Excluir estado '{state}'?", parent=self.root):
+            self._push_undo_snapshot(); self.automato.remove_state(state)
+            if state in self.positions: del self.positions[state]
+            self.draw_all(); self.status.config(text=f"Estado '{state}' excluído.")
+
+    def _rename_state_from_menu(self, old_name: str):
+        new_name = simpledialog.askstring("Renomear", f"Novo nome para '{old_name}':", initialvalue=old_name, parent=self.root)
+        if new_name and new_name != old_name:
+            try:
+                self._push_undo_snapshot(); self.automato.rename_state(old_name, new_name)
+                self.positions[new_name] = self.positions.pop(old_name); self.draw_all()
+                self.status.config(text=f"'{old_name}' renomeado para '{new_name}'.")
+            except ValueError as e: messagebox.showerror("Erro", str(e), parent=self.root); self.undo()
+
+    # --- NOVO MÉTODO ---
+    def _delete_edge(self, src, dst):
+        """Exclui TODAS as transições entre src e dst."""
+        if messagebox.askyesno("Excluir Transições", f"Excluir TODAS as transições de '{src}' para '{dst}'?", parent=self.root):
+            modified = False
+            new_transitions = defaultdict(set)
+            for key, destinations in self.automato.transitions.items():
+                s_key, _, _ = key
+                if s_key == src:
+                    kept_dests = {(d_state, push) for d_state, push in destinations if d_state != dst}
+                    if len(kept_dests) < len(destinations): modified = True
+                    if kept_dests: new_transitions[key] = kept_dests
+                else: new_transitions[key] = destinations
+            if modified:
+                self._push_undo_snapshot(); self.automato.transitions = new_transitions; self.draw_all()
+                self.status.config(text=f"Transições de {src} para {dst} excluídas.")
+            else: self.status.config(text="Nenhuma transição encontrada.")
+    # ------------------
 
     def _edit_edge(self, src: str, dst: str):
+        """ Edita TODAS as transições entre src e dst usando um diálogo. """
         current_labels = []
-        for (s, inp, pop), transitions in self.automato.transitions.items():
-            if s != src: continue
-            for d, push in transitions:
-                if d == dst:
-                    current_labels.append(f"{inp or EPSILON},{pop or EPSILON}/{push or EPSILON}")
-
+        for (s, inp, pop), destinations in self.automato.transitions.items():
+            if s == src:
+                for d_state, push in destinations:
+                    if d_state == dst:
+                        inp_disp = inp.replace(EPSILON, "ε") or "ε"; pop_disp = pop.replace(EPSILON, "ε") or "ε"; push_disp = push.replace(EPSILON, "ε") or "ε"
+                        current_labels.append(f"{inp_disp},{pop_disp}/{push_disp}")
         initial_value = "\n".join(sorted(current_labels))
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Editar Transições")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        dialog.geometry("400x300")
 
-        tk.Label(dialog, text=f"Transições de {src} para {dst} (uma por linha):\nFormato: 'entrada, desempilha / empilha' (use & ou ε para vazio)").pack(pady=5)
-
-        text_widget = tk.Text(dialog, wrap="word", height=10, width=45)
-        text_widget.pack(pady=5, padx=10, expand=True, fill="both")
-        text_widget.insert("1.0", initial_value.replace(EPSILON, "ε")) # Show ε in dialog
-
+        dialog = tk.Toplevel(self.root); dialog.title(f"Editar {src} -> {dst}"); dialog.transient(self.root); dialog.grab_set(); dialog.geometry("400x300")
+        tk.Label(dialog, text="Transições (uma por linha):\nFormato: 'entrada, desempilha / empilha' (use ε para vazio)", justify="left").pack(pady=5)
+        text_widget = tk.Text(dialog, wrap="word", height=10, width=45, font=("Courier", 10)); text_widget.pack(pady=5, padx=10, expand=True, fill="both"); text_widget.insert("1.0", initial_value)
         new_labels_str = None
-
-        def on_ok():
-            nonlocal new_labels_str
-            new_labels_str = text_widget.get("1.0", tk.END).strip()
-            dialog.destroy()
-
-        def on_cancel():
-            dialog.destroy()
-
-        button_frame = tk.Frame(dialog)
-        button_frame.pack(pady=5)
-        ok_button = ttk.Button(button_frame, text="OK", command=on_ok)
-        ok_button.pack(side=tk.LEFT, padx=5)
-        cancel_button = ttk.Button(button_frame, text="Cancelar", command=on_cancel)
-        cancel_button.pack(side=tk.LEFT, padx=5)
-
+        def on_ok(): nonlocal new_labels_str; new_labels_str = text_widget.get("1.0", tk.END).strip(); dialog.destroy()
+        def on_cancel(): dialog.destroy()
+        btn_frame = tk.Frame(dialog); btn_frame.pack(pady=5); ttk.Button(btn_frame, text="OK", command=on_ok).pack(side=tk.LEFT, padx=5); ttk.Button(btn_frame, text="Cancelar", command=on_cancel).pack(side=tk.LEFT, padx=5)
         dialog.wait_window()
 
         if new_labels_str is not None:
             self._push_undo_snapshot()
-            transitions_to_remove_keys = []
-            destinations_to_keep = defaultdict(set)
+            # Remove antigas transições src -> dst
+            keys_to_del = []; keys_to_mod = {}
+            for key, dests in self.automato.transitions.items():
+                s_key, _, _ = key
+                if s_key == src:
+                    kept = {(d, p) for d, p in dests if d != dst}
+                    if len(kept) < len(dests): # Se alguma foi removida
+                        if not kept: keys_to_del.append(key)
+                        else: keys_to_mod[key] = kept
+            for k in keys_to_del: del self.automato.transitions[k]
+            for k, v in keys_to_mod.items(): self.automato.transitions[k] = v
 
-            # ***** CORREÇÃO: Iterar sobre cópia das chaves ou usar items() *****
-            # Iterar sobre items() é mais seguro ao modificar o dicionário
-            for key, destinations in list(self.automato.transitions.items()):
-            # *****************************************************************
-                 s_key, _, _ = key # Unpack key here
-                 if s_key == src:
-                     original_dest_count = len(destinations)
-                     kept_dests = {(d, p) for d, p in destinations if d != dst}
-                     if len(kept_dests) < original_dest_count:
-                         if kept_dests:
-                             destinations_to_keep[key] = kept_dests
-                         else:
-                             transitions_to_remove_keys.append(key)
-
-            for key in transitions_to_remove_keys:
-                if key in self.automato.transitions:
-                    del self.automato.transitions[key]
-
-            for key, kept_dests in destinations_to_keep.items():
-                 if key in self.automato.transitions:
-                    self.automato.transitions[key] = kept_dests
-
-
-            error_lines = []
-            for i, label in enumerate([line.strip() for line in new_labels_str.split('\n') if line.strip()]):
-                if '/' in label:
+            # Adiciona novas
+            errors = []
+            for i, line in enumerate([ln.strip() for ln in new_labels_str.split('\n') if ln.strip()]):
+                if '/' in line:
                     try:
-                        read_part, push_part = label.split('/', 1)
-                        input_sym, pop_sym = (read_part.split(',') + ['ε'])[:2]
-                        input_sym_final = input_sym.strip() if input_sym.strip() != 'ε' else EPSILON
-                        pop_sym_final = pop_sym.strip() if pop_sym.strip() != 'ε' else EPSILON
-                        push_syms_final = push_part.strip() if push_part.strip() != 'ε' else EPSILON
+                        read, push = line.split('/', 1); parts = read.split(',', 1)
+                        inp = parts[0].strip(); pop = parts[1].strip() if len(parts) > 1 else "ε"
+                        inp_f = inp.replace('ε', EPSILON) or EPSILON; pop_f = pop.replace('ε', EPSILON) or EPSILON
+                        push_f = push.strip().replace('ε', EPSILON) or EPSILON
+                        self.automato.add_transition(src, inp_f, pop_f, dst, push_f)
+                    except (ValueError, IndexError): errors.append(f"Linha {i+1}: '{line}'")
+                elif line: errors.append(f"Linha {i+1}: '{line}' (falta '/')")
+            if errors: messagebox.showwarning("Erro Formato", "Ignoradas:\n" + "\n".join(errors), parent=self.root)
+            self.draw_all(); self.status.config(text=f"Transições {src}->{dst} atualizadas.")
 
-                        self.automato.add_transition(src, input_sym_final, pop_sym_final, dst, push_syms_final)
-                    except (ValueError, IndexError):
-                        error_lines.append(f"Linha {i+1}: '{label}'")
-                elif label:
-                     error_lines.append(f"Linha {i+1}: '{label}' (falta '/')")
-
-            if error_lines:
-                 messagebox.showwarning("Erro de Formato", "Algumas linhas tinham formato inválido e foram ignoradas:\n" + "\n".join(error_lines), parent=self.root)
-
-            self.draw_all()
-
-    def _find_edge_at(self, cx, cy):
-        min_dist_sq = (20 / self.scale)**2
-        found_edge = None
-
-        agg = defaultdict(list)
-        for (src, inp, pop), transitions in self.automato.transitions.items():
-            for (dst, push) in transitions:
-                agg[(src, dst)].append(f"{inp or EPSILON},{pop or EPSILON}/{push or EPSILON}")
-
-        for (src, dst) in agg.keys():
-            if src not in self.positions or dst not in self.positions: continue
-            x1_logic, y1_logic = self.positions[src]
-            x2_logic, y2_logic = self.positions[dst]
-
-            if src == dst:
-                 r_logic = 24
-                 loop_tx = x1_logic
-                 loop_ty = y1_logic - r_logic * 1.8
-                 dist_sq = (cx - loop_tx)**2 + (cy - loop_ty)**2
-                 if dist_sq < min_dist_sq:
-                     found_edge = (src, dst)
-                     min_dist_sq = dist_sq
-            else:
-                dx_logic, dy_logic = x2_logic - x1_logic, y2_logic - y1_logic
-                dist_logic = math.hypot(dx_logic, dy_logic) or 1
-                ux_logic, uy_logic = dx_logic/dist_logic, dy_logic/dist_logic
-
-                bend = 0.25 if (dst, src) in agg else 0
-                start_x_logic = x1_logic + ux_logic * 24
-                start_y_logic = y1_logic + uy_logic * 24
-                end_x_logic = x2_logic - ux_logic * 24
-                end_y_logic = y2_logic - uy_logic * 24
-                mid_x_logic = (start_x_logic + end_x_logic) / 2
-                mid_y_logic = (start_y_logic + end_y_logic) / 2
-
-                ctrl_x_logic = mid_x_logic - uy_logic * dist_logic * bend
-                ctrl_y_logic = mid_y_logic + ux_logic * dist_logic * bend
-                text_offset_logic = 15 / self.scale
-
-                txt_x_logic = ctrl_x_logic - uy_logic * text_offset_logic
-                txt_y_logic = ctrl_y_logic + ux_logic * text_offset_logic
-
-                dist_sq = (cx - txt_x_logic)**2 + (cy - txt_y_logic)**2
-                if dist_sq < min_dist_sq:
-                    found_edge = (src, dst)
-                    min_dist_sq = dist_sq
-        return found_edge
-
-    def _to_canvas(self, x, y):
-        return (x - self.offset_x) / self.scale, (y - self.offset_y) / self.scale
-
-    def _from_canvas(self, x, y):
-        return x * self.scale + self.offset_x, y * self.scale + self.offset_y
+    # --- Zoom/Pan e Busca ---
+    def _to_canvas(self, x, y): return (x - self.offset_x) / self.scale, (y - self.offset_y) / self.scale
+    def _from_canvas(self, x, y): return x * self.scale + self.offset_x, y * self.scale + self.offset_y
 
     def on_mousewheel(self, event):
-        delta = event.delta if hasattr(event, "delta") else (120 if event.num == 4 else -120)
-        factor = 1.0 + (delta / 1200.0)
-        old_scale, self.scale = self.scale, max(0.2, min(3.0, self.scale * factor))
-        mx, my = event.x, event.y
-        cx_before, cy_before = (mx - self.offset_x) / old_scale, (my - self.offset_y) / old_scale
-        self.offset_x, self.offset_y = mx - cx_before * self.scale, my - cy_before * self.scale
+        delta = event.delta if hasattr(event, "delta") else (120 if event.num==4 else -120)
+        factor = 1.0 + (delta / 1200.0); old_scale = self.scale
+        self.scale = max(0.2, min(3.0, self.scale * factor))
+        mx, my = event.x, event.y; cx_before, cy_before = self._to_canvas(mx, my)
+        self.offset_x = mx - cx_before * self.scale; self.offset_y = my - cy_before * self.scale
         self.draw_all()
 
     def on_middle_press(self, event): self.pan_last = (event.x, event.y)
@@ -657,147 +591,113 @@ class PilhaGUI:
     def on_middle_drag(self, event):
         if self.pan_last:
             dx, dy = event.x - self.pan_last[0], event.y - self.pan_last[1]
-            self.offset_x += dx; self.offset_y += dy
-            self.pan_last = (event.x, event.y)
+            self.offset_x += dx; self.offset_y += dy; self.pan_last = (event.x, event.y)
             self.draw_all()
 
     def _find_state_at(self, cx, cy):
         for sid, (sx, sy) in self.positions.items():
-            if math.hypot(cx - sx, cy - sy) <= 24: # Use logical radius 24
-                return sid
+            if math.hypot(cx - sx, cy - sy) <= 24: return sid # Raio lógico 24
         return None
 
-    def _generate_svg_text(self):
-        # Placeholder
-        return '<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"></svg>'
+    def _find_edge_at(self, cx, cy):
+        min_dist_sq_logic = (20 / self.scale)**2 / (self.scale**2) # Tolerância lógica^2
+        found = None; current_min = float('inf')
+        for (src, dst), info in self.edge_widgets.items():
+            txl, tyl = info.get("text_pos", (None, None))
+            if txl is not None:
+                d_sq = (cx - txl)**2 + (cy - tyl)**2
+                if d_sq < min_dist_sq_logic and d_sq < current_min: found = (src, dst); current_min = d_sq
+        return found
 
-    def cmd_reset_sim(self):
-        self.history = []
-        self.sim_step = 0
-        self.sim_playing = False
-        self.result_indicator = None
-        self.draw_all()
-        self.status.config(text="Simulação reiniciada.")
-
+    # --- Desenho ---
     def draw_all(self):
-        self.canvas.delete("all")
-        self._draw_simulation_display()
-        self._draw_edges_and_states()
+        self.canvas.delete("all"); self._draw_simulation_display(); self._draw_edges_and_states()
 
     def _draw_simulation_display(self):
-        canvas = self.sim_display_canvas
-        canvas.delete("all")
+        """ Desenha pilha e fita no canvas inferior. """
+        canvas = self.sim_display_canvas; canvas.delete("all")
+        if not self.history: return
+        step_idx = min(self.sim_step, len(self.history) - 1)
+        _, rem_input, stack = self.history[step_idx]
 
-        if not self.history:
-            return
+        # Pilha
+        canvas.create_text(10, 15, text="Pilha:", anchor="nw", font=("Helvetica", 10, "bold"))
+        x_p, cell_w, cell_h, base_y = 10, 30, 30, 50
+        canvas.create_line(x_p, base_y+1, x_p + 12*cell_w, base_y+1, width=1.5, fill="#555")
+        stack_draw = list(stack)[-12:]
+        for i, sym in enumerate(stack_draw):
+            x1 = x_p + i * cell_w; fill = "#e0f2fe" if i == len(stack_draw)-1 else "#ffffff"
+            canvas.create_rectangle(x1, base_y - cell_h, x1 + cell_w, base_y, fill=fill, outline="#7dd3fc", width=1)
+            canvas.create_text(x1 + cell_w/2, base_y - cell_h/2, text=sym.replace(EPSILON, "ε"), font=("Courier", 12))
+        if not stack_draw: canvas.create_text(x_p+cell_w/2, base_y-cell_h/2, text="[vazia]", font=("Courier",10), fill="#888")
 
-        current_sim_step = min(self.sim_step, len(self.history) - 1)
-        _, rem_input, stack = self.history[current_sim_step]
-
-        canvas.create_text(10, 25, text="Pilha:", anchor="w", font=("Helvetica", 10, "bold"))
-        x_pos = 60
-        cell_width, cell_height = 30, 30
-        base_y = 50
-
-        canvas.create_line(x_pos - 5, base_y, x_pos + 10 * cell_width, base_y, width=2)
-
-        stack_to_draw = stack[-10:]
-        for symbol in stack_to_draw:
-            canvas.create_rectangle(x_pos, base_y - cell_height, x_pos + cell_width, base_y, fill="#e0f2fe", outline="#7dd3fc")
-            canvas.create_text(x_pos + cell_width/2, base_y - cell_height/2, text=symbol.replace(EPSILON, "ε"), font=("Courier", 12, "bold"))
-            x_pos += cell_width
-
-        tape_start_x = x_pos + 50
-        canvas.create_text(tape_start_x, 25, text="Entrada Restante:", anchor="w", font=("Helvetica", 10, "bold"))
-
-        input_to_show = rem_input or EPSILON
-        x_pos = tape_start_x + 130
-
-        canvas.create_polygon(x_pos + cell_width/2, base_y - cell_height - 5, x_pos + cell_width/2 - 5, base_y - cell_height - 15, x_pos + cell_width/2 + 5, base_y - cell_height - 15, fill="black")
-
-        for i, symbol in enumerate(input_to_show[:15]):
-            canvas.create_rectangle(x_pos, base_y - cell_height, x_pos + cell_width, base_y, fill="#f1f5f9", outline="#cbd5e1")
-            canvas.create_text(x_pos + cell_width/2, base_y - cell_height/2, text=symbol.replace(EPSILON, "ε"), font=("Courier", 12, "bold"))
-            x_pos += cell_width
+        # Fita
+        x_f_lbl = x_p + 12*cell_w + 30; canvas.create_text(x_f_lbl, 15, text="Entrada Restante:", anchor="nw", font=("Helvetica", 10, "bold"))
+        input_show = rem_input or "ε"; x_f = x_f_lbl
+        canvas.create_polygon(x_f + cell_w/2, base_y - cell_h - 5, x_f + cell_w/2 - 5, base_y - cell_h - 15, x_f + cell_w/2 + 5, base_y - cell_h - 15, fill="black")
+        for i, sym in enumerate(input_show[:15]):
+            x1 = x_f + i * cell_w; fill = "#f1f5f9"
+            canvas.create_rectangle(x1, base_y - cell_h, x1 + cell_w, base_y, fill=fill, outline="#cbd5e1")
+            canvas.create_text(x1 + cell_w/2, base_y - cell_h/2, text=sym.replace(EPSILON, "ε"), font=("Courier", 12))
 
     def _draw_edges_and_states(self):
+        """ Desenha estados e transições no canvas principal. """
         active_state = self.history[min(self.sim_step, len(self.history)-1)][0] if self.history else None
+        self.edge_widgets.clear() # Limpa posições antigas dos rótulos
 
+        # Agrega transições por (origem, destino)
         agg = defaultdict(list)
-        for (src, inp, pop), transitions in self.automato.transitions.items():
-            for (dst, push) in transitions:
-                label = f"{inp.replace(EPSILON, 'ε')}, {pop.replace(EPSILON, 'ε')} / {push.replace(EPSILON, 'ε')}"
-                agg[(src, dst)].append(label)
+        for (src, inp, pop), destinations in self.automato.transitions.items():
+            for (dst, push) in destinations:
+                inp_d = inp.replace(EPSILON,'ε') or 'ε'; pop_d = pop.replace(EPSILON,'ε') or 'ε'; push_d = push.replace(EPSILON,'ε') or 'ε'
+                agg[(src, dst)].append(f"{inp_d},{pop_d}/{push_d}")
 
-        # Draw Edges
+        rad_logic = 24 # Raio lógico
+        rad_view = rad_logic * self.scale # Raio visual
+
+        # Desenha Arestas
         for (src, dst), labels in agg.items():
             if src not in self.positions or dst not in self.positions: continue
-            x1_logic, y1_logic = self.positions[src]
-            x2_logic, y2_logic = self.positions[dst]
-            x1, y1 = self._from_canvas(x1_logic, y1_logic)
-            x2, y2 = self._from_canvas(x2_logic, y2_logic)
-
-            color = "black"
-            width = 1.5
-
+            x1l, y1l = self.positions[src]; x2l, y2l = self.positions[dst]
+            x1, y1 = self._from_canvas(x1l, y1l); x2, y2 = self._from_canvas(x2l, y2l)
+            clr, w = "black", 1.5 * self.scale
             display_labels = sorted(labels)
 
-            if src == dst:
-                r = 24 * self.scale
-                loop_radius_x = r * 1.2
-                loop_radius_y = r * 1.6
-                center_x = x1
-                center_y = y1 - loop_radius_y * 0.8
-                p1 = (x1 - r * 0.5, y1 - r * 0.8)
-                c1 = (center_x - loop_radius_x, center_y - loop_radius_y)
-                c2 = (center_x + loop_radius_x, center_y - loop_radius_y)
-                p2 = (x1 + r * 0.5, y1 - r * 0.8)
-                self.canvas.create_line(p1, c1, c2, p2, smooth=True, arrow=tk.LAST, width=width, fill=color)
-                text_id = self.canvas.create_text(center_x, center_y - loop_radius_y*0.9, text="\n".join(display_labels), fill=color, justify=tk.CENTER, font=("Helvetica", 9))
-                self.canvas.tag_bind(text_id, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
-            else:
-                dx, dy = x2 - x1, y2 - y1
-                dist = math.hypot(dx, dy) or 1
-                ux, uy = dx/dist, dy/dist
-
+            if src == dst: # Laço
+                loop_rx, loop_ry = rad_view*1.2, rad_view*1.6; cx, cy = x1, y1 - loop_ry*0.8
+                p1=(x1-rad_view*0.5, y1-rad_view*0.8); c1=(cx-loop_rx, cy-loop_ry); c2=(cx+loop_rx, cy-loop_ry); p2=(x1+rad_view*0.5, y1-rad_view*0.8)
+                self.canvas.create_line(p1, c1, c2, p2, smooth=True, arrow=tk.LAST, width=w, fill=clr)
+                tx, ty = cx, cy - loop_ry*0.9; tid = self.canvas.create_text(tx, ty, text="\n".join(display_labels), fill=clr, justify=tk.CENTER, font=("Helvetica", 9))
+                txl, tyl = self._to_canvas(tx, ty); self.edge_widgets[(src, dst)] = {"text_pos": (txl, tyl)}
+                self.canvas.tag_bind(tid, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
+            else: # Normal
+                dx, dy = x2 - x1, y2 - y1; dist = math.hypot(dx, dy) or 1; ux, uy = dx/dist, dy/dist
                 bend = 0.25 if (dst, src) in agg else 0
-                start_x, start_y = x1 + ux * 24 * self.scale, y1 + uy * 24 * self.scale
-                end_x, end_y = x2 - ux * 24 * self.scale, y2 - uy * 24 * self.scale
-                mid_x, mid_y = (start_x + end_x) / 2, (start_y + end_y) / 2
-                ctrl_x, ctrl_y = mid_x - uy*dist*bend, mid_y + ux*dist*bend
-                text_offset = 15
+                sx, sy = x1+ux*rad_view, y1+uy*rad_view; ex, ey = x2-ux*rad_view, y2-uy*rad_view
+                mx, my = (sx + ex)/2, (sy + ey)/2; cx_ctrl, cy_ctrl = mx - uy*dist*bend, my + ux*dist*bend
+                txt_off = 15; tx, ty = cx_ctrl - uy * txt_off, cy_ctrl + ux * txt_off
+                self.canvas.create_line(sx, sy, cx_ctrl, cy_ctrl, ex, ey, smooth=True, arrow=tk.LAST, width=w, fill=clr)
+                tid = self.canvas.create_text(tx, ty, text="\n".join(display_labels), fill=clr, justify=tk.CENTER, font=("Helvetica", 9))
+                txl, tyl = self._to_canvas(tx, ty); self.edge_widgets[(src, dst)] = {"text_pos": (txl, tyl)}
+                self.canvas.tag_bind(tid, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
 
-                txt_x, txt_y = ctrl_x - uy * text_offset, ctrl_y + ux * text_offset
-
-                self.canvas.create_line(start_x, start_y, ctrl_x, ctrl_y, end_x, end_y, smooth=True, arrow=tk.LAST, width=width, fill=color)
-                text_id = self.canvas.create_text(txt_x, txt_y, text="\n".join(display_labels), fill=color, justify=tk.CENTER, font=("Helvetica", 9))
-                self.canvas.tag_bind(text_id, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
-
-        # Draw States
-        for sid in sorted(list(self.automato.states)):
+        # Desenha Estados
+        for sid in sorted(self.automato.states):
             if sid not in self.positions: continue
-            x_logic, y_logic = self.positions[sid]
-            x, y = self._from_canvas(x_logic, y_logic)
+            xl, yl = self.positions[sid]; x, y = self._from_canvas(xl, yl)
+            is_start=(sid==self.automato.start_state); is_final=(sid in self.automato.final_states); is_active=(sid==active_state)
+            fill, outl, wd = ("#e0f2fe", "#0284c7", 3) if is_active else ("white", "black", 2)
+            self.canvas.create_oval(x-rad_view, y-rad_view, x+rad_view, y+rad_view, fill=fill, outline=outl, width=wd)
+            if is_final: self.canvas.create_oval(x-(rad_view-4), y-(rad_view-4), x+(rad_view-4), y+(rad_view-4), outline="black", width=1)
+            self.canvas.create_text(x, y, text=sid, font=FONT) # Usa a constante FONT
+            if is_start: self.canvas.create_line(x-rad_view*2, y, x-rad_view, y, arrow=tk.LAST, width=2)
 
-            is_start = (sid == self.automato.start_state)
-            is_final = (sid in self.automato.final_states)
-            is_active = (sid == active_state)
-
-            fill, outline, width = ("#e0f2fe", "#0284c7", 3) if is_active else ("white", "black", 2)
-
-            self.canvas.create_oval(x-24*self.scale, y-24*self.scale, x+24*self.scale, y+24*self.scale, fill=fill, outline=outline, width=width)
-            if is_final:
-                self.canvas.create_oval(x-20*self.scale, y-20*self.scale, x+20*self.scale, y+20*self.scale, outline="black", width=1)
-            self.canvas.create_text(x, y, text=sid)
-            if is_start:
-                self.canvas.create_line(x-48*self.scale, y, x-24*self.scale, y, arrow=tk.LAST)
-
+        # Indicador Resultado
         if self.result_indicator:
-            color = "#16a34a" if self.result_indicator == "ACEITA" else "#dc2626"
-            self.canvas.create_text(self.canvas.winfo_width() - 10, 20, text=self.result_indicator,
-                                    font=("Helvetica", 16, "bold"), fill=color, anchor="ne")
+            clr = "#16a34a" if self.result_indicator == "ACEITA" else "#dc2626"
+            self.canvas.create_text(self.canvas.winfo_width() - 10, 20, text=self.result_indicator, font=("Helvetica", 16, "bold"), fill=clr, anchor="ne")
 
-    # --- Métodos de Undo/Redo ---
+    # --- Métodos Undo/Redo ---
     def _push_undo_snapshot(self):
         snap = snapshot_of_pda(self.automato, self.positions)
         if not self.undo_stack or self.undo_stack[-1] != snap:
@@ -819,3 +719,5 @@ class PilhaGUI:
             self.automato, self.positions = restore_from_pda_snapshot(snap)
             self.draw_all(); self.status.config(text="Refeito.")
         else: self.status.config(text="Nada para refazer.")
+
+# --- Fim da Classe PilhaGUI ---
