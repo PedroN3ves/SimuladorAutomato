@@ -10,13 +10,14 @@ from gui import EditorGUI
 from gui_mealy import MealyGUI
 from gui_moore import MooreGUI
 from gui_pilha import PilhaGUI
+from gui_turing import TuringGUI # <-- ADICIONADO
 import sv_ttk
 
 class MainMenu:
     def __init__(self, root):
         self.root = root
         self.root.title("IC-Tômato++")
-        self.root.geometry("500x650")
+        self.root.geometry("500x750") # <-- Aumentei um pouco a altura para o novo botão
         
         # Centraliza a janela
         self.root.eval('tk::PlaceWindow . center')
@@ -71,6 +72,14 @@ class MainMenu:
             text="Editor de Autômatos de Pilha",
             command=self.launch_pda_editor
         )
+        
+        # --- BOTÃO ADICIONADO ---
+        self.create_menu_option(
+            main_frame,
+            text="Editor de Máquinas de Turing",
+            command=self.launch_turing_editor
+        )
+        # ------------------------
 
     def create_menu_option(self, parent, text, command):
         """Cria um botão customizado com efeito de hover."""
@@ -115,6 +124,13 @@ class MainMenu:
         """Cria uma nova janela para o editor de Autômatos de Pilha."""
         pda_window = tk.Toplevel(self.root)
         app = PilhaGUI(pda_window)
+
+    # --- FUNÇÃO ADICIONADA ---
+    def launch_turing_editor(self):
+        """Cria uma nova janela para o editor de Máquinas de Turing."""
+        turing_window = tk.Toplevel(self.root)
+        app = TuringGUI(turing_window)
+    # -------------------------
 
     def load_logo(self):
         """Carrega e exibe o logo no canto superior direito."""
