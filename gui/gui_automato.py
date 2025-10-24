@@ -11,7 +11,7 @@ from tkinter import simpledialog, filedialog, messagebox, ttk
 from PIL import Image, ImageTk, ImageEnhance
 from typing import Dict, Tuple, Set, List, DefaultDict, Optional
 
-from automato import Automato, EPSILON
+from core.automato import Automato, EPSILON
 
 STATE_RADIUS = 24
 FONT = ("Helvetica", 11)

@@ -9,7 +9,7 @@ import tkinter as tk, tkinter.ttk as ttk
 from tkinter import simpledialog, filedialog, messagebox
 from typing import Dict, Tuple, Set, List, DefaultDict
 
-from maquina_mealy import MaquinaMealy, EPSILON
+from core.maquina_mealy import MaquinaMealy, EPSILON
 
 # Importações de PIL
 from PIL import Image, ImageTk, ImageEnhance

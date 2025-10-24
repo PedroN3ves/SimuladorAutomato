@@ -13,7 +13,7 @@ from typing import Dict, Tuple, List, Set
 from PIL import Image, ImageTk, ImageEnhance
 
 # Importações do módulo da máquina de turing
-from maquina_turing import (
+from core.maquina_turing import (
     MaquinaTuring, 
     BLANK_SYMBOL, 
     snapshot_of_turing, 

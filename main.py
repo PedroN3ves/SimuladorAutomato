@@ -6,11 +6,11 @@ import ctypes
 import urllib.request
 from PIL import Image, ImageTk
 
-from gui import EditorGUI
-from gui_mealy import MealyGUI
-from gui_moore import MooreGUI
-from gui_pilha import PilhaGUI
-from gui_turing import TuringGUI # <-- ADICIONADO
+from gui.gui_automato import EditorGUI
+from gui.gui_mealy import MealyGUI
+from gui.gui_moore import MooreGUI
+from gui.gui_pilha import PilhaGUI
+from gui.gui_turing import TuringGUI # <-- ADICIONADO
 import sv_ttk
 
 class MainMenu:

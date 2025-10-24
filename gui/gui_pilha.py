@@ -13,7 +13,7 @@ from typing import Dict, Tuple, List, Set # Import Set
 from PIL import Image, ImageTk, ImageEnhance
 
 # Importações do módulo do autômato de pilha
-from pilha import AutomatoPilha, EPSILON, snapshot_of_pda, restore_from_pda_snapshot
+from core.pilha import AutomatoPilha, EPSILON, snapshot_of_pda, restore_from_pda_snapshot
 
 # --- CONSTANTES ---
 STATE_RADIUS = 24 # Raio visual dos estados

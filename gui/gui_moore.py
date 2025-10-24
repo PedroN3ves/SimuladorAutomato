@@ -10,7 +10,7 @@ from tkinter import simpledialog, filedialog, messagebox
 from typing import Dict, Tuple, List, DefaultDict
 
 # Importações da máquina de Moore e utilitários
-from maquina_moore import MaquinaMoore, EPSILON, snapshot_of_moore, restore_from_moore_snapshot
+from core.maquina_moore import MaquinaMoore, EPSILON, snapshot_of_moore, restore_from_moore_snapshot
 
 # Importações de PIL para imagens
 from PIL import Image, ImageTk, ImageEnhance
