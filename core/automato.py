@@ -107,22 +107,86 @@ class Automato:
             nxt_states |= self.transitions.get((s, symbol), set())
         return nxt_states
 
+    # ***** INÍCIO DA MODIFICAÇÃO (Multi-caractere) *****
     def simulate_history(self, input_str: str):
-        """Simula e retorna histórico de passos (para animação)."""
+        """
+        Simula e retorna histórico de passos (para animação).
+        Modificado para suportar transições com múltiplos caracteres (ex: "aa").
+        """
         if not self.start_state:
             return [], False
-        current = self.epsilon_closure({self.start_state})
-        history = [(set(current), 0)]
-        for i, symbol in enumerate(input_str, 1):
-            current = self.epsilon_closure(self.move(current, symbol))
-            history.append((set(current), i))
-        accepted = any(s in self.final_states for s in current)
+
+        # O histórico armazena (conjunto_de_estados, indice_de_entrada_consumido)
+        current_states = self.epsilon_closure({self.start_state})
+        history = [(set(current_states), 0)]
+        
+        input_idx = 0
+        
+        # Caso especial: entrada vazia
+        if not input_str:
+            accepted = any(s in self.final_states for s in current_states)
+            return history, accepted
+
+        # Loop principal baseado no índice da string, não em caracteres
+        while input_idx < len(input_str):
+            
+            # 1. Encontra todas as transições *não-epsilon* que podem ser tomadas
+            
+            # Coleta todos os símbolos de transição (ex: "a", "b", "aa", "aba")
+            # que saem dos estados ativos atuais
+            possible_symbols = set()
+            for s in current_states:
+                for (src, sym) in self.transitions.keys():
+                    if src == s and sym != EPSILON:
+                        possible_symbols.add(sym)
+            
+            # Ordena os símbolos do mais longo para o mais curto
+            # Isso garante que "aa" seja tentado antes de "a"
+            sorted_symbols = sorted(list(possible_symbols), key=len, reverse=True)
+            
+            consumed_input = False
+            next_states_set = set()
+            remaining_input = input_str[input_idx:]
+            
+            # 2. Tenta encontrar a transição mais longa que corresponde à fita
+            for symbol in sorted_symbols:
+                if remaining_input.startswith(symbol):
+                    # Esta é uma transição válida.
+                    
+                    # Esta é a lógica da função 'move' para este símbolo
+                    for s in current_states:
+                        next_states_set.update(self.transitions.get((s, symbol), set()))
+                    
+                    if next_states_set:
+                        input_idx += len(symbol) # Avança o ponteiro da fita
+                        consumed_input = True
+                        break # Para de verificar (já pegamos a transição mais longa)
+            
+            if not consumed_input:
+                # Nenhuma transição (nem "a", nem "aa", etc.) correspondeu
+                # ao início da fita. A máquina trava.
+                break
+            
+            # 3. Se moveu, calcula o fecho-epsilon dos novos estados
+            current_states = self.epsilon_closure(next_states_set)
+            history.append((set(current_states), input_idx))
+
+            if not current_states:
+                 # Se o fecho-epsilon for vazio (ex: moveu para um estado sem saída), trava.
+                 break
+        
+        # Fim do loop. Verifica aceitação.
+        # Aceita se consumiu EXATAMENTE a entrada E está em um estado final
+        accepted = (input_idx == len(input_str)) and any(s in self.final_states for s in current_states)
+        
         return history, accepted
 
     def simulate(self, input_str: str) -> bool:
         """Simulação simples sem histórico."""
+        # A nova simulate_history já calcula a aceitação corretamente
         _, accepted = self.simulate_history(input_str)
         return accepted
+    # ***** FIM DA MODIFICAÇÃO *****
 
     # -------------------------
     # Conversão AFND → AFD
@@ -139,13 +203,30 @@ class Automato:
                       is_final=any(s in self.final_states for s in start_closure))
 
         count = 1
+        
+        # IMPORTANTE: A conversão para AFD assume que o alfabeto
+        # é composto de *caracteres únicos*. Se o seu AFND
+        # usa "aa", a conversão para AFD padrão não funcionará
+        # corretamente. Ela tratará "aa" como dois símbolos "a".
+        # Para esta implementação, vamos assumir que a conversão
+        # só funciona com alfabetos de símbolos únicos.
+        
+        # Coleta o alfabeto de símbolos únicos
+        single_char_alphabet = set()
+        for sym in self.alphabet:
+            for char in sym:
+                single_char_alphabet.add(char)
+
         while unmarked:
             T = unmarked.popleft()
             T_name = state_map[T]
-            for sym in self.alphabet:
+            for sym in single_char_alphabet: # Usa alfabeto de char único
                 if sym == EPSILON:
                     continue
+                
+                # A função move precisa ser chamada para o símbolo de char único
                 U = frozenset(self.epsilon_closure(self.move(T, sym)))
+                
                 if not U:
                     continue
                 if U not in state_map:
@@ -240,8 +321,15 @@ class Automato:
         """Adiciona um estado de erro para tornar o AFD completo, se necessário."""
         error_state_name = "_error"
         has_incomplete_transitions = False
+        
+        # Minimização também só funciona com alfabeto de char único
+        single_char_alphabet = set()
+        for sym in self.alphabet:
+            for char in sym:
+                single_char_alphabet.add(char)
+
         for s in self.states:
-            for sym in self.alphabet:
+            for sym in single_char_alphabet:
                 if not self.transitions.get((s, sym)):
                     has_incomplete_transitions = True
                     break
@@ -251,7 +339,7 @@ class Automato:
         if has_incomplete_transitions:
             self.add_state(error_state_name)
             for s in list(self.states): # Itera sobre uma cópia
-                 for sym in self.alphabet:
+                 for sym in single_char_alphabet:
                     if not self.transitions.get((s,sym)):
                         self.add_transition(s, sym, error_state_name)
 
@@ -264,6 +352,8 @@ class Automato:
         for (src, sym), dsts in self.transitions.items():
             if len(dsts) != 1: return False
             if sym == EPSILON: return False
+            # Um DFA verdadeiro não deve ter símbolos multi-caractere
+            if len(sym) > 1: return False 
         
         return True
 
@@ -299,7 +389,16 @@ class Automato:
                 edge_labels[(src, dst)].append(sym)
         
         for (src, dst), symbols in edge_labels.items():
-            label = ",".join(sorted(symbols)).replace(EPSILON, "\\epsilon")
+            # Escapa símbolos para LaTeX (ex: "aa" vira "aa", "&" vira \epsilon)
+            processed_symbols = []
+            for s in sorted(symbols):
+                if s == EPSILON:
+                    processed_symbols.append("\\epsilon")
+                else:
+                    processed_symbols.append(s.replace("_", "\\_"))
+
+            label = ",".join(processed_symbols)
+
             if src == dst:
                 tikz.append(f"\\path ({src}) edge [loop above] node {{${label}$}} ();")
             else:

@@ -77,7 +77,10 @@ class MooreGUI:
         self.redo_stack: List[str] = []
 
         # Estado da simulação
-        self.history: List[Tuple[str, str]] = [] # Histórico de (estado, saída_acumulada)
+        # ***** MODIFICADO *****
+        # O histórico agora é (estado, saida_acumulada, input_idx_consumido)
+        self.history: List[Tuple[str, str, int]] = [] 
+        # **********************
         self.sim_step = 0 # Passo atual da simulação
         self.sim_playing = False # Se a simulação está rodando automaticamente
         self.final_output_indicator = None # String da saída final a ser exibida
@@ -102,7 +105,17 @@ class MooreGUI:
 
     def center_view(self):
          """ Centraliza a visualização no canvas (placeholder). """
-         # A lógica real seria mais complexa com zoom/pan.
+         if not self.positions:
+             try:
+                 canvas_width = self.canvas.winfo_width()
+                 canvas_height = self.canvas.winfo_height()
+                 self.offset_x = canvas_width / 2 - (100 * self.scale)
+                 self.offset_y = canvas_height / 2 - (100 * self.scale)
+             except tk.TclError:
+                 self.offset_x = 100
+                 self.offset_y = 100
+             self.draw_all()
+             return
          self.draw_all()
 
     def _build_toolbar(self):
@@ -246,9 +259,13 @@ class MooreGUI:
     def _set_mode(self, new_mode, pinned=False):
         """ Define o modo de operação atual (e opcionalmente o fixa). """
         if pinned:
-            self.pinned_mode = new_mode # Atualiza o modo fixo
-
-        self.mode = new_mode # Atualiza o modo atual (pode ser temporário, do hover)
+            # Se clicar no botão já ativo, desativa (volta para 'select')
+            if self.pinned_mode == new_mode:
+                self.pinned_mode = "select"
+                new_mode = "select" # Atualiza o modo corrente também
+            else: # Senão, ativa o novo modo
+                self.pinned_mode = new_mode
+        self.mode = new_mode # Atualiza sempre o modo corrente (para hover)
 
         mode_map = {
             "select": "Modo: Selecionar", "add_state": "Modo: Adicionar Estado",
@@ -264,8 +281,9 @@ class MooreGUI:
             "delete_state": "X_cursor",
             "delete_transition": "X_cursor" # Novo cursor
         }
-        self.canvas.config(cursor=cursor_map.get(new_mode, "arrow"))
-        self.mode_label.config(text=mode_map.get(new_mode, "Modo: Selecionar"))
+        # Usa self.pinned_mode para o cursor e texto
+        self.canvas.config(cursor=cursor_map.get(self.pinned_mode, "arrow"))
+        self.mode_label.config(text=mode_map.get(self.pinned_mode, "Modo: Selecionar"))
         # A barra de status é atualizada pelas funções cmd_* específicas
         self._update_mode_button_styles() # Atualiza destaque visual dos botões
 
@@ -359,8 +377,15 @@ class MooreGUI:
         if not self.current_filepath: self.cmd_save_as()
         else:
             try:
+                # Usa o snapshot mais recente para garantir consistência
+                snap = snapshot_of_moore(self.moore_machine, self.positions)
                 with open(self.current_filepath, "w", encoding="utf-8") as f:
-                    f.write(snapshot_of_moore(self.moore_machine, self.positions))
+                    f.write(snap)
+                 # Garante que o estado salvo esteja no topo da pilha undo
+                if not self.undo_stack or self.undo_stack[-1] != snap:
+                    self.undo_stack.append(snap)
+                    if len(self.undo_stack) > 50: self.undo_stack.pop(0)
+                    self.redo_stack.clear()
                 self.status.config(text=f"Arquivo salvo em '{self.current_filepath}'.")
             except Exception as e:
                 messagebox.showerror("Erro ao Salvar", f"Não foi possível salvar o arquivo:\n{e}", parent=self.root)
@@ -484,7 +509,7 @@ class MooreGUI:
         clicked_edge = self._find_edge_at(cx, cy) # Verifica clique na aresta
 
         # --- NOVO: LÓGICA DE EXCLUIR TRANSIÇÃO ---
-        if self.mode == "delete_transition":
+        if self.mode == "delete_transition" or self.pinned_mode == "delete_transition":
             if clicked_edge:
                 self._delete_edge(*clicked_edge) # Chama a função de exclusão
                 self._set_mode("select", pinned=True) # Volta ao modo de seleção
@@ -493,7 +518,7 @@ class MooreGUI:
             return # Finaliza o processamento do clique aqui
         # ----------------------------------------
 
-        if self.mode == "add_state":
+        if self.mode == "add_state" or self.pinned_mode == "add_state":
             state_name = f"q{len(self.moore_machine.states)}"
             
             # --- USA O DIÁLOGO CUSTOMIZADO ---
@@ -513,7 +538,7 @@ class MooreGUI:
             # Permite adicionar múltiplos estados sem resetar o modo
             return
 
-        if self.mode == "delete_state":
+        if self.mode == "delete_state" or self.pinned_mode == "delete_state":
             if clicked_state:
                 if messagebox.askyesno("Excluir Estado", f"Tem certeza que deseja excluir o estado '{clicked_state}'?", parent=self.root):
                     self._push_undo_snapshot() # Salva antes
@@ -526,7 +551,7 @@ class MooreGUI:
                 self.status.config(text="Clique sobre um estado para excluir.")
             return
 
-        if self.mode == "add_transition_src":
+        if self.mode == "add_transition_src" or self.pinned_mode == "add_transition_src":
             if clicked_state:
                 self.transition_src = clicked_state
                 self._set_mode("add_transition_dst", pinned=True) # Continua no modo de adicionar transição
@@ -535,14 +560,14 @@ class MooreGUI:
                 self.status.config(text="Clique em um estado de origem válido.")
             return
 
-        if self.mode == "add_transition_dst":
+        if self.mode == "add_transition_dst" or self.pinned_mode == "add_transition_dst":
             if clicked_state:
                 src, dst = self.transition_src, clicked_state
                 
                 # --- USA O DIÁLOGO CUSTOMIZADO ---
                 inp = self._ask_custom_string(
                     "Transição", 
-                    f"Símbolo de entrada (de {src} para {dst}):"
+                    f"Símbolo de entrada (de {src} para {dst}):\n(Use & para vazio, ex: aa)"
                 )
                 
                 if inp is not None: # Se não cancelou
@@ -559,7 +584,7 @@ class MooreGUI:
                 self.status.config(text="Clique em um estado de destino válido.")
             return
 
-        if self.mode == "set_start":
+        if self.mode == "set_start" or self.pinned_mode == "set_start":
             if clicked_state:
                 self._push_undo_snapshot() # Salva antes
                 self.moore_machine.start_state = clicked_state
@@ -682,7 +707,7 @@ class MooreGUI:
             self._push_undo_snapshot()
             self.moore_machine.output_function[state] = new_output_final
             # Atualiza também o alfabeto de saída
-            self.moore_machine.output_alphabet.add(new_output_final)
+            self.moore_machine.output_alphabet = set(self.moore_machine.output_function.values())
             self.draw_all()
             self.status.config(text=f"Saída do estado '{state}' atualizada para '{new_output_final}'.")
 
@@ -699,9 +724,7 @@ class MooreGUI:
             if transitions_to_remove:
                 self._push_undo_snapshot() # Salva antes de remover
                 for inp in transitions_to_remove:
-                    key = (src, inp)
-                    if key in self.moore_machine.transitions:
-                        del self.moore_machine.transitions[key]
+                   self.moore_machine.remove_transition(src, inp) # Usa o método da classe core
                 self.draw_all()
                 self.status.config(text=f"Transições de {src} para {dst} excluídas.")
             else:
@@ -729,9 +752,7 @@ class MooreGUI:
 
             # Remove as transições antigas entre src e dst
             for inp in transitions_to_edit:
-                key = (src, inp)
-                if key in self.moore_machine.transitions:
-                    del self.moore_machine.transitions[key]
+                self.moore_machine.remove_transition(src, inp) # Usa o método da classe core
 
             # Adiciona as novas transições
             new_inputs = [s.strip().replace("ε", EPSILON) or EPSILON for s in new_label_str.split(',') if s.strip()]
@@ -806,11 +827,18 @@ class MooreGUI:
         """ Desenha a fita de saída no canvas inferior. """
         self.output_canvas.delete("all")
         # Pega a saída acumulada até o passo ATUAL da simulação
+        # ***** MODIFICAÇÃO *****
+        # Pega o item [1] (output_str) do histórico
         output_str = self.history[self.sim_step][1] if self.history and self.sim_step < len(self.history) else ""
+        # **********************
 
         cell_width = 35
         cell_height = 35
-        y_pos = (self.output_canvas.winfo_height() - cell_height) / 2 if self.output_canvas.winfo_height() > cell_height else 5
+        try:
+            y_pos = (self.output_canvas.winfo_height() - cell_height) / 2 if self.output_canvas.winfo_height() > cell_height else 5
+        except tk.TclError:
+             y_pos = 5 # Fallback
+             
         x_pos = 10
 
         for char in output_str:
@@ -820,14 +848,24 @@ class MooreGUI:
                                            text=char.replace(EPSILON, "ε"), font=("Courier", 16, "bold"), fill="#15803d")
             x_pos += cell_width + 5
 
+    # ***** INÍCIO DA MODIFICAÇÃO (draw_all) *****
     def draw_all(self):
         """ Redesenha todo o conteúdo do canvas principal. """
         self.canvas.delete("all")
         self.edge_widgets.clear() # Limpa dados de desenho das arestas
 
-        active_state = self.history[self.sim_step][0] if self.history and self.sim_step < len(self.history) else None
+        input_str = self.input_entry.get()
+        
+        # Pega dados do passo atual
+        active_state = self.history[self.sim_step][0] if self.history else None
+        
+        # Pega dados do passo anterior (para destacar transição)
         prev_state = self.history[self.sim_step - 1][0] if self.history and self.sim_step > 0 else None
-        input_char = self.input_entry.get()[self.sim_step - 1] if self.history and self.sim_step > 0 and len(self.input_entry.get()) >= self.sim_step else None
+        consumed_now = self.history[self.sim_step][2] if self.history else 0
+        consumed_prev = self.history[self.sim_step - 1][2] if self.sim_step > 0 else 0
+        
+        # O símbolo que ACABOU de ser consumido
+        current_symbol_consumed = input_str[consumed_prev:consumed_now] if self.sim_step > 0 else None
 
         # Agrega transições por origem/destino para desenhar setas
         agg: DefaultDict[Tuple[str, str], List[str]] = DefaultDict(list)
@@ -843,12 +881,14 @@ class MooreGUI:
             x2, y2 = self._from_canvas(x2_logic, y2_logic)
 
             label_text = ", ".join(sorted([lbl.replace(EPSILON, "ε") for lbl in labels]))
-            width = 1.5 * self.scale # Largura da linha escalada
-
+            
             # Determina se esta transição está ativa na simulação
-            is_active_transition = (src == prev_state and dst == active_state and input_char in labels)
+            # Verifica se a origem é o estado anterior, o destino é o atual
+            # E se o símbolo consumido está entre os rótulos desta transição
+            is_active_transition = (src == prev_state and dst == active_state and current_symbol_consumed in labels)
+            
             color = "#16a34a" if is_active_transition else "black" # Verde se ativa, preto senão
-            width = 3 * self.scale if is_active_transition else width # Mais grossa se ativa
+            width = (3 * self.scale) if is_active_transition else (1.5 * self.scale) # Mais grossa se ativa
 
             if src == dst: # Laço
                 r = STATE_RADIUS * self.scale
@@ -894,7 +934,8 @@ class MooreGUI:
             fill, outline, width = ("#e0f2fe", "#0284c7", 3) if is_active else ("white", "black", 2) # Destaque se ativo
 
             radius = STATE_RADIUS * self.scale # Raio escalado
-            self.canvas.create_oval(x-radius, y-radius, x+radius, y-radius, fill=fill, outline=outline, width=width)
+            # Corrigido y+radius para o oval
+            self.canvas.create_oval(x-radius, y-radius, x+radius, y+radius, fill=fill, outline=outline, width=width) 
             self.canvas.create_text(x, y, text=state_label, font=FONT, justify=tk.CENTER)
 
         # Seta Inicial
@@ -908,10 +949,15 @@ class MooreGUI:
             color = "#059669" if self.final_output_indicator != "TRAVOU" else "#dc2626" # Verde ou vermelho
             text = f"Saída Final: {self.final_output_indicator.replace(EPSILON, 'ε')}"
             # Posiciona no canto superior direito
-            self.canvas.create_text(self.canvas.winfo_width()-10, 20, text=text, font=("Helvetica", 14, "bold"), fill=color, anchor="e")
+            try:
+                canvas_width = self.canvas.winfo_width()
+                self.canvas.create_text(canvas_width-10, 20, text=text, font=("Helvetica", 14, "bold"), fill=color, anchor="e")
+            except tk.TclError:
+                pass # Ignora erro se canvas não estiver pronto
 
         # Desenha a fita de saída no canvas inferior
         self._draw_output_tape()
+    # ***** FIM DA MODIFICAÇÃO (draw_all) *****
 
 
     # --- Métodos de Undo/Redo ---

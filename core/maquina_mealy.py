@@ -94,11 +94,14 @@ class MaquinaMealy:
         _, final_output = self.simulate_history(input_str)
         return final_output
 
-    def simulate_history(self, input_str: str) -> Tuple[List[Tuple[str, str]], Optional[str]]:
+    # ***** INÍCIO DA MODIFICAÇÃO (Multi-caractere) *****
+    def simulate_history(self, input_str: str) -> Tuple[List[Tuple[str, str, int]], Optional[str]]:
         """
         Simula a execução e retorna o histórico de passos para animação.
+        Modificado para suportar transições com múltiplos caracteres (ex: "aa").
+        
         Retorna uma tupla contendo (histórico, saída_final).
-        O histórico é uma lista de tuplas (estado_atual, saida_acumulada).
+        O histórico é uma lista de tuplas (estado_atual, saida_acumulada, input_idx_consumido).
         Retorna None como saída_final se a máquina travar.
         """
         if not self.start_state:
@@ -106,22 +109,46 @@ class MaquinaMealy:
 
         current_state = self.start_state
         output_str = ""
-        # O histórico começa com o estado inicial e a saída vazia
-        history = [(current_state, "")]
+        input_idx = 0
+        
+        # O histórico começa com o estado inicial, saída vazia e índice 0
+        history = [(current_state, "", 0)]
 
-        for symbol in input_str:
-            transition_key = (current_state, symbol)
-            if transition_key not in self.transitions:
-                # Máquina trava, retorna o histórico até o momento e indica falha
+        while input_idx < len(input_str):
+            # 1. Encontra todas as transições que saem do estado atual
+            possible_symbols = set()
+            for (src, sym) in self.transitions.keys():
+                if src == current_state:
+                    possible_symbols.add(sym)
+
+            # 2. Ordena do mais longo para o mais curto (ex: "aa" antes de "a")
+            sorted_symbols = sorted(list(possible_symbols), key=len, reverse=True)
+
+            remaining_input = input_str[input_idx:]
+            consumed = False
+
+            # 3. Tenta encontrar a transição mais longa que bate com a fita
+            for symbol in sorted_symbols:
+                if remaining_input.startswith(symbol):
+                    # Transição encontrada
+                    next_state, output_symbol = self.transitions[(current_state, symbol)]
+                    
+                    output_str += output_symbol
+                    current_state = next_state
+                    input_idx += len(symbol) # Avança o índice pelo tamanho do símbolo
+                    
+                    history.append((current_state, output_str, input_idx))
+                    consumed = True
+                    break # Para de procurar (já achou a mais longa)
+
+            if not consumed:
+                # Nenhuma transição (nem "a", nem "aa", etc.) foi encontrada
+                # Máquina trava
                 return history, None
-            
-            next_state, output_symbol = self.transitions[transition_key]
-            
-            output_str += output_symbol
-            current_state = next_state
-            history.append((current_state, output_str))
-            
+        
+        # Fim da simulação
         return history, output_str
+    # ***** FIM DA MODIFICAÇÃO *****
 
     # -------------------------
     # Serialização

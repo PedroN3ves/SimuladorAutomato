@@ -31,7 +31,12 @@ def snapshot_of_mealy(machine: MaquinaMealy, positions: Dict[str, Tuple[int, int
 def restore_from_mealy_snapshot(s: str):
     """Restaura uma máquina de Mealy e suas posições a partir de um snapshot JSON."""
     data = json.loads(s)
-    machine = MaquinaMealy.from_json(json.dumps(data.get("mealy_machine", {})))
+    # Garante que os dados da máquina sejam um dict antes de desserializar
+    machine_data = data.get("mealy_machine", {})
+    if isinstance(machine_data, str):
+        machine_data = json.loads(machine_data)
+
+    machine = MaquinaMealy.from_json(json.dumps(machine_data))
     positions = data.get("positions", {})
     return machine, positions
 
@@ -91,7 +96,10 @@ class MealyGUI:
         self.redo_stack: List[str] = []
 
         # Estado da simulação
-        self.history: List[Tuple[str, str]] = []
+        # ***** MODIFICADO *****
+        # O histórico agora é (estado, saida_acumulada, input_idx_consumido)
+        self.history: List[Tuple[str, str, int]] = []
+        # **********************
         self.sim_step = 0
         self.sim_playing = False
         self.final_output_indicator = None
@@ -118,8 +126,17 @@ class MealyGUI:
 
     def center_view(self):
         """Centraliza a visualização da máquina no canvas (placeholder)."""
-        # A lógica real de centralização dependeria de zoom/pan.
-        # Por enquanto, apenas garante redesenho inicial.
+        if not self.positions:
+            try:
+                canvas_width = self.canvas.winfo_width()
+                canvas_height = self.canvas.winfo_height()
+                self.offset_x = canvas_width / 2 - (100 * self.scale)
+                self.offset_y = canvas_height / 2 - (100 * self.scale)
+            except tk.TclError:
+                self.offset_x = 100
+                self.offset_y = 100
+            self.draw_all()
+            return
         self.draw_all()
 
     def _build_toolbar(self):
@@ -153,10 +170,6 @@ class MealyGUI:
         self._create_toolbar_menubutton(toolbar, "exportar", "Exportar", export_menu)
 
         ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
-
-        # --- Botão de Simulação Rápida ---
-        # Removido ttk.Button daqui, pois os botões de simulação estão na barra inferior
-        # ttk.Button(toolbar, text="Simulação Rápida", command=self.cmd_quick_simulate).pack(side=tk.LEFT, padx=2)
 
         # --- Rótulo de Modo ---
         self.mode_label = ttk.Label(toolbar, text="Modo: Selecionar", font=("Helvetica", 11, "bold"))
@@ -264,9 +277,13 @@ class MealyGUI:
     def _set_mode(self, new_mode, pinned=False):
         """Define o modo de operação e atualiza a UI."""
         if pinned:
-            self.pinned_mode = new_mode # Atualiza o modo fixo apenas se pinned=True
-
-        self.mode = new_mode # Sempre atualiza o modo atual (para hover)
+            # Se clicar no botão já ativo, desativa (volta para 'select')
+            if self.pinned_mode == new_mode:
+                self.pinned_mode = "select"
+                new_mode = "select" # Atualiza o modo corrente também
+            else: # Senão, ativa o novo modo
+                self.pinned_mode = new_mode
+        self.mode = new_mode # Atualiza sempre o modo corrente (para hover)
 
         mode_text_map = {
             "select": "Modo: Selecionar",
@@ -285,9 +302,9 @@ class MealyGUI:
             "delete_state": "X_cursor",
             "delete_transition": "X_cursor" # Novo cursor
         }
-        self.canvas.config(cursor=cursor_map.get(new_mode, "arrow"))
-        self.mode_label.config(text=mode_text_map.get(new_mode, "Modo: Selecionar"))
-        # A status bar é atualizada pelos comandos individuais (cmd_*)
+        # Usa self.pinned_mode para o cursor e texto, pois self.mode pode ser temporário (hover)
+        self.canvas.config(cursor=cursor_map.get(self.pinned_mode, "arrow"))
+        self.mode_label.config(text=mode_text_map.get(self.pinned_mode, "Modo: Selecionar"))
         self._update_mode_button_styles() # Atualiza destaque dos botões
 
     # --- DIÁLOGO CUSTOMIZADO (HELPER) ---
@@ -455,7 +472,7 @@ class MealyGUI:
         clicked_edge = self._find_edge_at(cx, cy) # Verifica se clicou numa aresta
 
         # --- LÓGICA DE EXCLUIR TRANSIÇÃO ---
-        if self.mode == "delete_transition":
+        if self.mode == "delete_transition" or self.pinned_mode == "delete_transition":
             if clicked_edge:
                 self._delete_edge(*clicked_edge)
                 self._set_mode("select", pinned=True) # Volta ao modo de seleção
@@ -464,7 +481,7 @@ class MealyGUI:
             return # Importante: Finaliza o processamento do clique aqui
         # ------------------------------------
 
-        if self.mode == "add_state":
+        if self.mode == "add_state" or self.pinned_mode == "add_state":
             sid = f"q{len(self.mealy_machine.states)}"
             self.mealy_machine.add_state(sid)
             self.positions[sid] = (cx, cy)
@@ -474,7 +491,7 @@ class MealyGUI:
             # Não volta para 'select' automaticamente, permite adicionar múltiplos estados
             return
 
-        if self.mode == "delete_state":
+        if self.mode == "delete_state" or self.pinned_mode == "delete_state":
             if clicked_state:
                 if messagebox.askyesno("Excluir Estado", f"Tem certeza que deseja excluir o estado '{clicked_state}'?", parent=self.root):
                     self._push_undo_snapshot() # Salva antes de excluir
@@ -487,7 +504,7 @@ class MealyGUI:
                 self.status.config(text="Clique sobre um estado para excluir.")
             return
 
-        if self.mode == "add_transition_src":
+        if self.mode == "add_transition_src" or self.pinned_mode == "add_transition_src":
             if clicked_state:
                 self.transition_src = clicked_state
                 self._set_mode("add_transition_dst", pinned=True) # Mantém pinado
@@ -496,14 +513,14 @@ class MealyGUI:
                 self.status.config(text="Clique em um estado de origem válido.")
             return
 
-        if self.mode == "add_transition_dst":
+        if self.mode == "add_transition_dst" or self.pinned_mode == "add_transition_dst":
             if clicked_state:
                 src, dst = self.transition_src, clicked_state
                 
                 # --- USA O DIÁLOGO CUSTOMIZADO ---
                 label = self._ask_custom_string(
                     "Transição",
-                    f"Formato: 'entrada/saída' (de {src} para {dst})\n(Use & para vazio)"
+                    f"Formato: 'entrada/saída' (de {src} para {dst})\n(Use & para vazio, ex: aa/01)"
                 )
                 
                 if label and '/' in label:
@@ -526,7 +543,7 @@ class MealyGUI:
                 self.status.config(text="Clique em um estado de destino válido.")
             return
 
-        if self.mode == "set_start":
+        if self.mode == "set_start" or self.pinned_mode == "set_start":
             if clicked_state:
                 self._push_undo_snapshot() # Salva antes de alterar
                 self.mealy_machine.start_state = clicked_state
@@ -744,6 +761,8 @@ class MealyGUI:
         """Encontra o rótulo de uma aresta nas coordenadas LÓGICAS (cx, cy)."""
         min_dist_sq = (20 / self.scale)**2 # Tolerância de clique (em pixels de tela ao quadrado)
         found_edge = None
+        current_min_dist_logic_sq = float('inf')
+
 
         # Itera sobre as posições dos rótulos armazenadas (que estão em coords lógicas)
         for (src, dst), info in self.edge_widgets.items():
@@ -754,11 +773,9 @@ class MealyGUI:
                 # Converte a tolerância de pixels de tela para lógica ao quadrado
                 tolerance_logic_sq = min_dist_sq / (self.scale**2)
 
-                if dist_sq_logic < tolerance_logic_sq:
-                     # Atualiza se encontrou um mais próximo
+                if dist_sq_logic < tolerance_logic_sq and dist_sq_logic < current_min_dist_logic_sq:
                      found_edge = (src, dst)
-                     # Não precisa mais de min_dist_sq se a primeira ocorrência é suficiente
-                     # min_dist_sq = dist_sq_logic * (self.scale**2) # Atualiza min_dist em tela
+                     current_min_dist_logic_sq = dist_sq_logic # Atualiza a menor distância
 
         return found_edge
 
@@ -767,10 +784,17 @@ class MealyGUI:
     def _draw_output_tape(self):
         """Desenha a fita de saída gerada no canvas inferior."""
         self.output_canvas.delete("all")
+        # ***** MODIFICAÇÃO *****
+        # Pega o item [1] (output_str) do histórico
         output_str = self.history[self.sim_step][1] if self.history and self.sim_step < len(self.history) else ""
+        # **********************
 
         cell_width, cell_height = 35, 35
-        y_pos = (self.output_canvas.winfo_height() - cell_height) / 2 if self.output_canvas.winfo_height() > cell_height else 5
+        try:
+            y_pos = (self.output_canvas.winfo_height() - cell_height) / 2 if self.output_canvas.winfo_height() > cell_height else 5
+        except tk.TclError:
+            y_pos = 5 # Fallback se a janela não estiver pronta
+            
         x_pos = 10
 
         for char in output_str:
@@ -780,12 +804,24 @@ class MealyGUI:
                                            text=char.replace(EPSILON, "ε"), font=("Courier", 16, "bold"), fill="#15803d")
             x_pos += cell_width + 5
 
+    # ***** INÍCIO DA MODIFICAÇÃO (draw_all) *****
     def draw_all(self):
         """Redesenha todo o autômato no canvas."""
         self.canvas.delete("all")
         self.edge_widgets.clear() # Limpa infos das arestas antigas
 
-        active_state = self.history[self.sim_step][0] if self.history and self.sim_step < len(self.history) else None
+        input_str = self.input_entry.get()
+        
+        # Pega dados do passo atual
+        active_state = self.history[self.sim_step][0] if self.history else None
+        
+        # Pega dados do passo anterior (para destacar transição)
+        prev_state = self.history[self.sim_step - 1][0] if self.history and self.sim_step > 0 else None
+        consumed_now = self.history[self.sim_step][2] if self.history else 0
+        consumed_prev = self.history[self.sim_step - 1][2] if self.sim_step > 0 else 0
+        
+        # O símbolo que ACABOU de ser consumido
+        current_symbol_consumed = input_str[consumed_prev:consumed_now] if self.sim_step > 0 else None
 
         # Agrega transições para desenhar setas
         agg: DefaultDict[Tuple[str, str], List[str]] = DefaultDict(list)
@@ -801,7 +837,19 @@ class MealyGUI:
             x2, y2 = self._from_canvas(x2_logic, y2_logic)
 
             label_text = "\n".join(sorted(labels)) # Empilha rótulos verticalmente se houver muitos
-            width = 1.5 * self.scale # Escala largura da linha
+            
+            # Lógica de destaque da transição
+            is_active_transition = False
+            if current_symbol_consumed and src == prev_state and dst == active_state:
+                for label in labels: # labels é ["a/0", "b/1", "aa/01"]
+                    inp, _ = label.split('/', 1)
+                    # Compara o símbolo de input da transição com o símbolo consumido
+                    if inp.replace('ε', EPSILON) == current_symbol_consumed:
+                        is_active_transition = True
+                        break
+            
+            color = "#16a34a" if is_active_transition else "black"
+            width = (3 * self.scale) if is_active_transition else (1.5 * self.scale)
 
             if src == dst: # Laço
                 r = STATE_RADIUS * self.scale
@@ -810,10 +858,10 @@ class MealyGUI:
                 c1 = (x1 - r * 1.5, y1 - r * 2.5)
                 c2 = (x1 + r * 1.5, y1 - r * 2.5)
                 p2 = (x1 + r * 0.5, y1 - r * 0.8)
-                self.canvas.create_line(p1, c1, c2, p2, smooth=True, arrow=tk.LAST, width=width)
+                self.canvas.create_line(p1, c1, c2, p2, smooth=True, arrow=tk.LAST, width=width, fill=color)
                 # Posição do texto acima do laço
                 tx, ty = x1, y1 - STATE_RADIUS * 2.2 * self.scale
-                text_id = self.canvas.create_text(tx, ty, text=label_text, font=FONT, justify=tk.CENTER)
+                text_id = self.canvas.create_text(tx, ty, text=label_text, font=FONT, justify=tk.CENTER, fill=color)
                 # Armazena posição LÓGICA do texto para detecção de clique
                 tx_logic, ty_logic = self._to_canvas(tx, ty)
                 self.edge_widgets[(src, dst)] = {"text_pos": (tx_logic, ty_logic)}
@@ -832,8 +880,8 @@ class MealyGUI:
                 # Deslocamento do texto perpendicular à linha (ou curva)
                 text_offset = 15 # Em pixels de tela
                 txt_x, txt_y = ctrl_x - uy * text_offset, ctrl_y + ux * text_offset # Posição perto do ponto de controle
-                self.canvas.create_line(start_x, start_y, ctrl_x, ctrl_y, end_x, end_y, smooth=True, width=width, arrow=tk.LAST)
-                text_id = self.canvas.create_text(txt_x, txt_y, text=label_text, font=FONT, justify=tk.CENTER)
+                self.canvas.create_line(start_x, start_y, ctrl_x, ctrl_y, end_x, end_y, smooth=True, width=width, arrow=tk.LAST, fill=color)
+                text_id = self.canvas.create_text(txt_x, txt_y, text=label_text, font=FONT, justify=tk.CENTER, fill=color)
                 # Armazena posição LÓGICA do texto
                 tx_logic, ty_logic = self._to_canvas(txt_x, txt_y)
                 self.edge_widgets[(src, dst)] = {"text_pos": (tx_logic, ty_logic)}
@@ -864,10 +912,15 @@ class MealyGUI:
             color = "#059669" if self.final_output_indicator != "TRAVOU" else "#dc2626"
             text = f"Saída Final: {self.final_output_indicator.replace(EPSILON, 'ε')}"
             # Posiciona no canto superior direito do canvas principal
-            self.canvas.create_text(self.canvas.winfo_width()-10, 20, text=text, font=("Helvetica", 14, "bold"), fill=color, anchor="e")
+            try:
+                canvas_width = self.canvas.winfo_width()
+                self.canvas.create_text(canvas_width-10, 20, text=text, font=("Helvetica", 14, "bold"), fill=color, anchor="e")
+            except tk.TclError:
+                pass # Ignora se o canvas não estiver pronto
 
         # Desenha a fita de saída no canvas inferior
         self._draw_output_tape()
+    # ***** FIM DA MODIFICAÇÃO (draw_all) *****
 
     # --- Métodos de Simulação ---
     def cmd_animate(self):
@@ -876,7 +929,7 @@ class MealyGUI:
             messagebox.showwarning("Simular", "Defina um estado inicial.", parent=self.root)
             return
 
-        self.history, _ = self.mealy_machine.simulate_history(input_str) # Guarda o histórico
+        self.history, _ = self.mealy_machine.simulate_history(input_str) # Guarda o histórico (novo formato)
         self.sim_step = 0 # Começa no estado inicial (índice 0 do histórico)
         self.sim_playing = False
         self.final_output_indicator = None # Limpa indicador anterior

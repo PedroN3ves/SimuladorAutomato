@@ -113,7 +113,10 @@ class EditorGUI:
         self.redo_stack: List[str] = []
 
         # Simulação
-        self.history: List[Set[str]] = []
+        # ***** MODIFICADO *****
+        # O histórico agora é uma lista de tuplas: (set_de_estados, indice_de_entrada)
+        self.history: List[Tuple[Set[str], int]] = []
+        # **********************
         self.sim_step = 0
         self.sim_playing = False
         self.sim_input_str = ""
@@ -144,10 +147,14 @@ class EditorGUI:
         """Centraliza a visualização do autômato no canvas."""
         if not self.positions:
             # Se não houver estados, centraliza a visualização em um ponto padrão
-            canvas_width = self.canvas.winfo_width()
-            canvas_height = self.canvas.winfo_height()
-            self.offset_x = canvas_width / 2 - (100 * self.scale)
-            self.offset_y = canvas_height / 2 - (100 * self.scale)
+            try:
+                canvas_width = self.canvas.winfo_width()
+                canvas_height = self.canvas.winfo_height()
+                self.offset_x = canvas_width / 2 - (100 * self.scale)
+                self.offset_y = canvas_height / 2 - (100 * self.scale)
+            except tk.TclError: # Fallback se a janela ainda não estiver visível
+                self.offset_x = 100
+                self.offset_y = 100
             self.draw_all()
             return
 
@@ -402,6 +409,15 @@ class EditorGUI:
         if not self.automato.start_state:
             messagebox.showwarning("Converter", "Defina o estado inicial antes de converter.", parent=self.root)
             return
+        
+        # Aviso sobre conversão com multi-caracteres
+        if any(len(sym) > 1 for sym in self.automato.alphabet):
+            messagebox.showwarning("Converter", 
+                "Aviso: A conversão para AFD pode não funcionar como esperado.\n"
+                "Ela tratará símbolos como 'aa' como dois símbolos 'a' separados, "
+                "e não como uma única transição.", 
+                parent=self.root)
+
         dfa = self.automato.to_dfa()
         if not dfa:
             messagebox.showerror("Converter", "Falha ao converter para AFD.", parent=self.root)
@@ -414,6 +430,13 @@ class EditorGUI:
 
     def cmd_minimize(self):
         try:
+             # Aviso sobre minimização
+            if any(len(sym) > 1 for sym in self.automato.alphabet):
+                 messagebox.showwarning("Minimizar", 
+                    "Aviso: A minimização de AFD padrão assume um alfabeto de símbolos únicos.\n"
+                    "O resultado pode não ser o esperado.", 
+                    parent=self.root)
+
             new = self.automato.minimize()
             self._push_undo_snapshot()
             self.automato = new
@@ -426,9 +449,9 @@ class EditorGUI:
     def cmd_validate_dfa(self):
         ok = self.automato.is_dfa()
         if ok:
-            messagebox.showinfo("Validação AFD", "O autômato é um AFD válido.", parent=self.root)
+            messagebox.showinfo("Validação AFD", "O autômato é um AFD válido (não possui ε-transições, não-determinismo ou símbolos multi-caractere).", parent=self.root)
         else:
-            messagebox.showwarning("Validação AFD", "O autômato NÃO é um AFD válido (pode ter ε-transições ou não-determinismo).", parent=self.root)
+            messagebox.showwarning("Validação AFD", "O autômato NÃO é um AFD válido (pode ter ε-transições, não-determinismo ou símbolos multi-caractere).", parent=self.root)
         self.status.config(text=f"Validação AFD: {'OK' if ok else 'Inválido'}")
 
     def cmd_convert_to_grammar(self):
@@ -441,6 +464,13 @@ class EditorGUI:
         # Se não existir, esta parte precisaria ser implementada.
         # Vamos assumir que ele existe e retorna uma string:
         try:
+            # Esta função provavelmente NÃO suportará símbolos multi-caractere
+            if any(len(sym) > 1 for sym in self.automato.alphabet):
+                messagebox.showwarning("Converter", 
+                    "Aviso: A conversão para Gramática Regular pode não funcionar como esperado.\n"
+                    "Ela não foi projetada para símbolos multi-caractere como 'aa'.", 
+                    parent=self.root)
+
             grammar_str = self.automato.to_regular_grammar()
         except AttributeError:
              messagebox.showerror("Erro", "A função 'to_regular_grammar' não foi encontrada no 'core/automato.py'.", parent=self.root)
@@ -759,7 +789,7 @@ class EditorGUI:
         self._push_undo_snapshot()
         # Limpa transições antigas entre esses dois estados
         for sym in cur_label.split(","):
-            if sym: self.automato.remove_transition(src, sym, dst)
+            if sym: self.automato.remove_transition(src, sym.replace("ε", EPSILON), dst)
         # Adiciona as novas
         for sym in (s.strip() or EPSILON for s in val.split(",")):
             if sym: self.automato.add_transition(src, sym, dst)
@@ -770,7 +800,7 @@ class EditorGUI:
             self._push_undo_snapshot()
             cur_label = self.edge_widgets.get((src, dst), {}).get("label", "")
             for sym in cur_label.split(","):
-                if sym: self.automato.remove_transition(src, sym, dst)
+                if sym: self.automato.remove_transition(src, sym.replace("ε", EPSILON), dst)
             self.draw_all()
 
     def _find_state_at(self, cx, cy):
@@ -788,6 +818,7 @@ class EditorGUI:
     #################################################################
     # NOVA FUNÇÃO PARA DESENHAR A FITA DE ENTRADA                   #
     #################################################################
+    # ***** INÍCIO DA MODIFICAÇÃO *****
     def _draw_input_tape(self):
         """Desenha a fita de entrada na parte inferior do canvas durante a simulação."""
         if not self.history:
@@ -800,21 +831,29 @@ class EditorGUI:
         tape_width = len(self.sim_input_str) * cell_width
         start_x = (self.canvas.winfo_width() - tape_width) / 2
 
+        # Pega o índice de quantos caracteres foram consumidos ATÉ o passo atual
+        # self.history[self.sim_step] é (set_de_estados, indice_consumido)
+        consumed_idx_now = self.history[self.sim_step][1] if self.history else 0
+        # Pega o índice consumido no passo anterior
+        consumed_idx_prev = self.history[self.sim_step - 1][1] if self.sim_step > 0 else 0
+
+
         for i, symbol in enumerate(self.sim_input_str):
             x1 = start_x + i * cell_width
             y1 = y_pos
             x2 = x1 + cell_width
             y2 = y1 + cell_height
 
-            # Determina se esta é a célula ativa
-            is_head = (self.sim_step > 0 and i == self.sim_step - 1)
+            # Determina se esta célula foi lida NESTE passo
+            # (Ex: se pulou de "aa", i=0 e i=1 serão destacadas)
+            is_head = (self.sim_step > 0 and i >= consumed_idx_prev and i < consumed_idx_now)
             fill_color = TAPE_HEAD_COLOR if is_head else TAPE_CELL_COLOR
 
             self.canvas.create_rectangle(x1, y1, x2, y2, fill=fill_color, outline=TAPE_BORDER_COLOR)
             self.canvas.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=symbol, font=("Courier", 14, "bold"))
 
-            # Desenha a "cabeça de leitura" (um triângulo) acima da célula ativa
-            if is_head:
+            # Desenha a "cabeça de leitura" (triângulo) acima da PRÓXIMA célula a ser lida
+            if i == consumed_idx_now:
                 head_x = (x1 + x2) / 2
                 self.canvas.create_polygon(
                     head_x, y1 - 2,
@@ -823,18 +862,25 @@ class EditorGUI:
                     fill=DEFAULT_TRANSITION_COLOR,
                     outline=DEFAULT_TRANSITION_COLOR
                 )
+    # ***** FIM DA MODIFICAÇÃO *****
 
     def draw_all(self):
         self.canvas.delete("all")
         self.state_widgets.clear(); self.edge_widgets.clear()
 
         # --- LÓGICA ADICIONADA PARA SIMULAÇÃO ---
+        # ***** INÍCIO DA MODIFICAÇÃO *****
         # Pega o conjunto de estados do passo anterior e o atual
-        current_active_set = self.history[self.sim_step] if self.history else set()
-        prev_active_set = self.history[self.sim_step - 1] if self.history and self.sim_step > 0 else set()
+        current_active_set = self.history[self.sim_step][0] if self.history else set()
+        prev_active_set = self.history[self.sim_step - 1][0] if self.history and self.sim_step > 0 else set()
 
-        # Pega o símbolo que causou a transição atual
-        current_symbol = self.sim_input_str[self.sim_step - 1] if self.sim_input_str and self.sim_step > 0 else None
+        # Pega os índices de consumo
+        consumed_now = self.history[self.sim_step][1] if self.history else 0
+        consumed_prev = self.history[self.sim_step - 1][1] if self.sim_step > 0 else 0
+        
+        # O símbolo é a substring entre o índice anterior e o atual
+        current_symbol = self.sim_input_str[consumed_prev:consumed_now] if self.sim_input_str and self.sim_step > 0 else None
+        # ***** FIM DA MODIFICAÇÃO *****
         # --- FIM DA LÓGICA ADICIONADA ---
 
         # Agrega transições para desenhar setas múltiplas ou com múltiplos rótulos
@@ -855,6 +901,8 @@ class EditorGUI:
                  # Checa se o símbolo da transição atual está nos rótulos desta seta
                  if current_symbol in syms:
                      is_active_transition = True
+                 # (Esta lógica de fecho-epsilon pode não ser 100% precisa para destaque,
+                 # mas é uma boa aproximação)
                  if EPSILON in syms:
                      closure_of_prev = self.automato.epsilon_closure(prev_active_set)
                      if src in closure_of_prev and dst in closure_of_prev:
@@ -918,16 +966,19 @@ class EditorGUI:
         x, y = 100, 100
         for i, s in enumerate(sorted(list(self.automato.states))): self.positions[s] = (x + (i%7)*120, y + (i//7)*120)
 
+    # ***** INÍCIO DA MODIFICAÇÃO *****
     def cmd_simulate(self):
         self.sim_input_str = self.input_entry.get()
         history, _ = self.automato.simulate_history(self.sim_input_str)
         if not history:
             messagebox.showwarning("Simular", "Autômato vazio ou sem estado inicial.", parent=self.root)
             return
-        self.history = [h for h, _ in history]
+        self.history = history # Armazena o histórico completo (states, index)
         self.sim_step, self.result_indicator, self.sim_playing = 0, None, False
         self.draw_all()
+    # ***** FIM DA MODIFICAÇÃO *****
 
+    # ***** INÍCIO DA MODIFICAÇÃO *****
     def cmd_step(self):
         if not self.history:
             messagebox.showwarning("Passo", "Nenhuma simulação em andamento. Clique em 'Simular' primeiro.", parent=self.root)
@@ -935,12 +986,16 @@ class EditorGUI:
 
         if self.sim_step >= len(self.history) - 1:
             if self.history:
-                accepted = bool(self.history[-1] & self.automato.final_states)
+                # Pega o último estado e o índice final
+                final_states, final_idx = self.history[-1]
+                # Aceita se consumiu TUDO e está no estado final
+                accepted = (final_idx == len(self.sim_input_str)) and bool(final_states & self.automato.final_states)
                 self.result_indicator = "ACEITA" if accepted else "REJEITADA"
                 self.draw_all()
             return
         self.sim_step += 1
         self.draw_all()
+    # ***** FIM DA MODIFICAÇÃO *****
 
     def cmd_play_pause(self):
         if not self.history: messagebox.showwarning("Play", "Nenhuma simulação em andamento.", parent=self.root); return
@@ -948,14 +1003,19 @@ class EditorGUI:
         self.status.config(text="Reproduzindo..." if self.sim_playing else "Pausado")
         if self.sim_playing: self._playback_step()
 
+    # ***** INÍCIO DA MODIFICAÇÃO *****
     def _playback_step(self):
         if self.sim_playing and self.sim_step < len(self.history) - 1:
             self.cmd_step();
             self.root.after(ANIM_MS, self._playback_step)
         elif self.sim_playing:
-            self.result_indicator = "ACEITA" if bool(self.history[-1] & self.automato.final_states) else "REJEITADA"
+            # Lógica de aceitação do final do cmd_step
+            final_states, final_idx = self.history[-1]
+            accepted = (final_idx == len(self.sim_input_str)) and bool(final_states & self.automato.final_states)
+            self.result_indicator = "ACEITA" if accepted else "REJEITADA"
             self.sim_playing = False
             self.draw_all()
+    # ***** FIM DA MODIFICAÇÃO *****
 
     def cmd_reset_sim(self):
         self.history, self.sim_step, self.sim_playing, self.result_indicator, self.sim_input_str = [], 0, False, None, ""

@@ -75,36 +75,83 @@ class MaquinaMoore:
             new_dst = new_name if dst == old_name else dst
             new_transitions[(new_src, in_sym)] = new_dst
         self.transitions = new_transitions
+        
+    def remove_transition(self, src: str, input_symbol: str):
+        """Remove uma transição específica baseada na origem e no símbolo de entrada."""
+        key = (src, input_symbol)
+        if key in self.transitions:
+            del self.transitions[key]
 
-    def simulate_history(self, input_str: str) -> Tuple[List[Tuple[str, str]], Optional[str]]:
+    # ***** INÍCIO DA MODIFICAÇÃO (Multi-caractere) *****
+    def simulate_history(self, input_str: str) -> Tuple[List[Tuple[str, str, int]], Optional[str]]:
         """
         Simula a execução e retorna o histórico de passos.
+        Modificado para suportar transições com múltiplos caracteres (ex: "aa").
         A saída de Moore é baseada no estado, então a saída inicial é a do estado inicial.
+        
+        Retorna:
+            - history: Lista de (estado_atual, saida_acumulada, input_idx_consumido)
+            - final_output: String da saída completa ou None se travar.
         """
         if not self.start_state:
             return [], None
 
         current_state = self.start_state
-        output_str = self.output_function.get(current_state, '')
-        history = [(current_state, output_str)]
+        # A saída inicial é a do estado inicial
+        output_str = self.output_function.get(current_state, '') 
+        input_idx = 0
+        
+        # O histórico começa com o estado inicial, sua saída e índice 0
+        history = [(current_state, output_str, 0)]
 
-        for symbol in input_str:
-            transition_key = (current_state, symbol)
-            if transition_key not in self.transitions:
-                return history, None # Máquina trava
-            
-            next_state = self.transitions[transition_key]
-            output_str += self.output_function.get(next_state, '')
-            current_state = next_state
-            history.append((current_state, output_str))
-            
+        while input_idx < len(input_str):
+            # 1. Encontra todas as transições que saem do estado atual
+            possible_symbols = set()
+            for (src, sym) in self.transitions.keys():
+                if src == current_state:
+                    possible_symbols.add(sym)
+
+            # 2. Ordena do mais longo para o mais curto
+            sorted_symbols = sorted(list(possible_symbols), key=len, reverse=True)
+
+            remaining_input = input_str[input_idx:]
+            consumed = False
+
+            # 3. Tenta encontrar a transição mais longa que bate com a fita
+            for symbol in sorted_symbols:
+                if remaining_input.startswith(symbol):
+                    # Transição encontrada
+                    next_state = self.transitions[(current_state, symbol)]
+                    
+                    # Adiciona a saída do *novo* estado à string de saída
+                    output_str += self.output_function.get(next_state, '') 
+                    
+                    current_state = next_state
+                    input_idx += len(symbol) # Avança o índice
+                    
+                    history.append((current_state, output_str, input_idx))
+                    consumed = True
+                    break # Para de procurar
+
+            if not consumed:
+                # Nenhuma transição encontrada, máquina trava
+                return history, None
+        
+        # Fim da simulação
         return history, output_str
+    # ***** FIM DA MODIFICAÇÃO *****
 
     def to_json(self) -> str:
         """Serializa a máquina para uma string JSON."""
+        # Filtra input_alphabet e output_alphabet para remover None, se houver
+        input_alpha = list(filter(None, self.input_alphabet))
+        output_alpha = list(filter(None, self.output_alphabet))
+        
         data = {
             "states": list(self.states),
             "start_state": self.start_state,
+            "input_alphabet": input_alpha, # Usando a lista filtrada
+            "output_alphabet": output_alpha, # Usando a lista filtrada
             "output_function": self.output_function,
             "transitions": [
                 {"src": src, "input": in_sym, "dst": dst}
@@ -123,9 +170,28 @@ class MaquinaMoore:
         for state, output in output_func.items():
             machine.add_state(state, output, is_start=(state == data.get("start_state")))
         
+        # Recalcula alfabetos a partir das transições e função de saída
+        machine.input_alphabet = set()
+        machine.output_alphabet = set(output_func.values())
+
         for t in data.get("transitions", []):
-            machine.add_transition(t["src"], t["input"], t["dst"])
-            
+            try:
+                # Adiciona e atualiza o alfabeto de entrada
+                machine.add_transition(t["src"], t["input"], t["dst"])
+            except KeyError as e:
+                print(f"Aviso: Ignorando transição malformada (chave faltando: {e}): {t}")
+            except ValueError as e:
+                 print(f"Aviso: Ignorando transição inválida ({e}): {t}")
+
+        # Garante que start_state é válido
+        if machine.start_state not in machine.states:
+            if machine.states:
+                machine.start_state = next(iter(machine.states)) # Pega um estado qualquer se o salvo for inválido
+                print(f"Aviso: Estado inicial '{data.get('start_state')}' não encontrado. Definindo '{machine.start_state}' como inicial.")
+            else:
+                 machine.start_state = None
+
+
         return machine
 
 def snapshot_of_moore(machine: MaquinaMoore, positions: Dict[str, Tuple[int, int]]) -> str:
