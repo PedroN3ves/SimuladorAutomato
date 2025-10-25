@@ -242,8 +242,12 @@ class EditorGUI:
         self.mode_buttons[icon_name] = button
         Tooltip(button, tooltip_text)
 
-        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m))
-        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode))
+        # ***** INÍCIO DA CORREÇÃO *****
+        # Adiciona o evento <Enter> COM add='+' para não sobrescrever o binding do Tooltip
+        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m), add='+')
+        # Adiciona o evento <Leave> COM add='+' para não sobrescrever o binding do Tooltip
+        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode), add='+')
+        # ***** FIM DA CORREÇÃO *****
 
     def _build_canvas(self):
         self.canvas = tk.Canvas(self.root, width=1100, height=700, bg="white")

@@ -201,10 +201,12 @@ class MealyGUI:
         self.mode_buttons[icon_name] = button
         Tooltip(button, tooltip_text)
 
+        # ***** INÍCIO DA CORREÇÃO *****
         # Atualiza modo ao passar o mouse, mas não fixa (pinned)
-        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m, pinned=False))
+        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m, pinned=False), add='+')
         # Volta ao modo fixo ao retirar o mouse
-        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode, pinned=False)) # Não re-pinna ao sair
+        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode, pinned=False), add='+')
+        # ***** FIM DA CORREÇÃO *****
 
     def _build_canvas(self):
         self.canvas = tk.Canvas(self.root, bg="white")

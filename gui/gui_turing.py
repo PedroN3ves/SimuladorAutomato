@@ -14,9 +14,9 @@ from PIL import Image, ImageTk, ImageEnhance
 
 # Importações do módulo da máquina de turing
 from core.maquina_turing import (
-    MaquinaTuring, 
-    BLANK_SYMBOL, 
-    snapshot_of_turing, 
+    MaquinaTuring,
+    BLANK_SYMBOL,
+    snapshot_of_turing,
     restore_from_turing_snapshot
 )
 
@@ -153,7 +153,7 @@ class TuringGUI:
         self._create_toolbar_button(toolbar, "alternar_final", "Alternar Final", self.cmd_toggle_final)
         self._create_toolbar_button(toolbar, "excluir_estado", "Excluir Estado", self.cmd_delete_state_mode)
         self._create_toolbar_button(toolbar, "excluir_transicao", "Excluir Transição", self.cmd_delete_transition_mode)
-        
+
         ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, padx=8, fill='y')
 
         export_menu = tk.Menu(toolbar, tearoff=0)
@@ -193,8 +193,11 @@ class TuringGUI:
         button.pack(side=tk.LEFT, padx=2)
         self.mode_buttons[icon_name] = button
         Tooltip(button, tooltip_text)
-        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m, pinned=False))
-        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode, pinned=False))
+
+        # ***** INÍCIO DA CORREÇÃO *****
+        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m, pinned=False), add='+')
+        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode, pinned=False), add='+')
+        # ***** FIM DA CORREÇÃO *****
 
 
     def _build_canvas(self):
@@ -292,7 +295,7 @@ class TuringGUI:
         try:
             with open(path, "r", encoding="utf-8") as f: snapshot = f.read()
             self.automato, self.positions = restore_from_turing_snapshot(snapshot)
-            self.current_filepath = path; self.root.title(f"Editor MT - {path}")
+            self.current_filepath = path; self.root.title(f"Editor MT - {os.path.basename(path)}")
             self.undo_stack = [snapshot]; self.redo_stack.clear()
             self.draw_all(); self.center_view()
             self.status.config(text=f"Arquivo '{os.path.basename(path)}' carregado.")
@@ -316,7 +319,7 @@ class TuringGUI:
     def cmd_save_as(self):
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("Turing Machine Files", "*.json"), ("All", "*.*")])
         if not path: return
-        self.current_filepath = path; self.root.title(f"Editor MT - {path}")
+        self.current_filepath = path; self.root.title(f"Editor MT - {os.path.basename(path)}")
         self.cmd_save()
 
     def cmd_export_tikz(self): messagebox.showinfo("Exportar", "Exportação TikZ não implementada para MT.", parent=self.root)
@@ -431,27 +434,27 @@ class TuringGUI:
 
         if self.mode == "add_transition_dst" and clicked_state:
             src, dst = self.transition_src, clicked_state
-            label = simpledialog.askstring("Transição de Turing", 
-                                           f"Formato: 'lido / escrito, direcao'\n(Use {DISPLAY_BLANK} ou deixe em branco para {DISPLAY_BLANK})\nEx: a / b, R", 
+            label = simpledialog.askstring("Transição de Turing",
+                                           f"Formato: 'lido / escrito, direcao'\n(Use {DISPLAY_BLANK} ou deixe em branco para {DISPLAY_BLANK})\nEx: a / b, R",
                                            parent=self.root)
             if label:
                 try:
                     read_part, rest_part = label.split('/', 1)
                     write_part, dir_part = rest_part.split(',', 1)
-                    
+
                     # Implementa a lógica de "deixar em branco"
                     read_final = read_part.strip().replace(DISPLAY_BLANK, BLANK_SYMBOL) or BLANK_SYMBOL
                     write_final = write_part.strip().replace(DISPLAY_BLANK, BLANK_SYMBOL) or BLANK_SYMBOL
                     dir_final = dir_part.strip().upper()
-                    
+
                     if dir_final not in ('L', 'R'):
                         raise ValueError("Direção deve ser 'L' ou 'R'")
-                        
+
                     self._push_undo_snapshot()
                     self.automato.add_transition(src, read_final, dst, write_final, dir_final)
                     self.draw_all()
                     self.status.config(text=f"Transição {src} -> {dst} adicionada.")
-                except (ValueError, IndexError) as e: 
+                except (ValueError, IndexError) as e:
                     messagebox.showerror("Erro Formato", f"Formato inválido. Use 'lido / escrito, direcao'.\nDetalhe: {e}", parent=self.root)
             else: self.status.config(text="Adição cancelada.")
             self._set_mode("select", pinned=True); self.transition_src = None
@@ -531,7 +534,7 @@ class TuringGUI:
                 if key[0] == src and d == dst:
                     keys_to_del.append(key)
                     modified = True
-            
+
             if modified:
                 self._push_undo_snapshot()
                 for key in keys_to_del:
@@ -574,11 +577,11 @@ class TuringGUI:
                 try:
                     read_part, rest_part = line.split('/', 1)
                     write_part, dir_part = rest_part.split(',', 1)
-                    
+
                     read_final = read_part.strip().replace(DISPLAY_BLANK, BLANK_SYMBOL) or BLANK_SYMBOL
                     write_final = write_part.strip().replace(DISPLAY_BLANK, BLANK_SYMBOL) or BLANK_SYMBOL
                     dir_final = dir_part.strip().upper()
-                    
+
                     if dir_final not in ('L', 'R'): raise ValueError("Direção != L/R")
                     self.automato.add_transition(src, read_final, dst, write_final, dir_final)
                 except (ValueError, IndexError): errors.append(f"Linha {i+1}: '{line}'")
@@ -632,14 +635,14 @@ class TuringGUI:
         """ Desenha a fita da MT no canvas inferior. """
         canvas = self.sim_display_canvas
         canvas.delete("all")
-        
+
         try:
             canvas_w = canvas.winfo_width()
             canvas_h = canvas.winfo_height()
         except tk.TclError:
             return # Canvas ainda não está pronto
 
-        if not self.history or canvas_w < 10: 
+        if not self.history or canvas_w < 10:
             canvas.create_text(canvas_w/2, canvas_h/2, text="Fita de Simulação", font=("Helvetica", 10, "italic"), fill="#888")
             return
 
@@ -650,7 +653,7 @@ class TuringGUI:
         center_x = canvas_w / 2
         y1 = (canvas_h - cell_h) / 2
         y2 = y1 + cell_h
-        
+
         # Calcula quantas células cabem em cada lado
         num_cells_half = (canvas_w // cell_w) // 2 + 2
         start_idx = head_pos - num_cells_half
@@ -659,11 +662,11 @@ class TuringGUI:
         for i in range(start_idx, end_idx + 1):
             symbol = tape_dict.get(i, self.automato.blank_symbol)
             display_symbol = symbol.replace(BLANK_SYMBOL, DISPLAY_BLANK)
-            
+
             x_offset = (i - head_pos) * cell_w
             x1 = center_x + x_offset - (cell_w / 2)
             x2 = x1 + cell_w
-            
+
             fill = "#e0f2fe" if i == head_pos else "#f1f5f9"
             canvas.create_rectangle(x1, y1, x2, y2, fill=fill, outline="#cbd5e1")
             canvas.create_text(x1 + cell_w/2, y1 + cell_h/2, text=display_symbol, font=("Courier", 12))
@@ -680,7 +683,7 @@ class TuringGUI:
     def _draw_edges_and_states(self):
         """ Desenha estados e transições no canvas principal. """
         active_state = self.history[min(self.sim_step, len(self.history)-1)][0] if self.history else None
-        
+
         # Agrega transições por (origem, destino)
         agg = defaultdict(list)
         for (src, read), (dst, write, move) in self.automato.transitions.items():

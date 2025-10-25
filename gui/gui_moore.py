@@ -181,10 +181,12 @@ class MooreGUI:
         self.mode_buttons[icon_name] = button
         Tooltip(button, tooltip_text)
 
+        # ***** INÍCIO DA CORREÇÃO (TOOLTIP) *****
         # Atualiza modo no hover, mas não fixa (pinned=False)
-        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m, pinned=False))
+        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m, pinned=False), add='+')
         # Volta ao modo fixado quando o mouse sai
-        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode, pinned=False))
+        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode, pinned=False), add='+')
+        # ***** FIM DA CORREÇÃO (TOOLTIP) *****
 
     def _build_canvas(self):
         """ Constrói o canvas principal para desenhar o autômato. """
@@ -682,8 +684,27 @@ class MooreGUI:
 
 
     # --- Métodos de Transformação e Busca ---
+
+    # ***** INÍCIO DO CÓDIGO ADICIONADO *****
     def _to_canvas(self, x, y): return (x - self.offset_x) / self.scale, (y - self.offset_y) / self.scale
     def _from_canvas(self, x, y): return x * self.scale + self.offset_x, y * self.scale + self.offset_y
+
+    def on_mousewheel(self, event):
+        delta = event.delta if hasattr(event, "delta") else (120 if event.num==4 else -120)
+        factor = 1.0 + (delta / 1200.0); old_scale = self.scale
+        self.scale = max(0.2, min(3.0, self.scale * factor))
+        mx, my = event.x, event.y; cx_before, cy_before = self._to_canvas(mx, my)
+        self.offset_x = mx - cx_before * self.scale; self.offset_y = my - cy_before * self.scale
+        self.draw_all()
+
+    def on_middle_press(self, event): self.pan_last = (event.x, event.y)
+    def on_middle_release(self, event): self.pan_last = None
+    def on_middle_drag(self, event):
+        if self.pan_last:
+            dx, dy = event.x - self.pan_last[0], event.y - self.pan_last[1]
+            self.offset_x += dx; self.offset_y += dy; self.pan_last = (event.x, event.y)
+            self.draw_all()
+    # ***** FIM DO CÓDIGO ADICIONADO *****
 
     def _find_state_at(self, cx, cy):
         """ Encontra um estado nas coordenadas LÓGICAS (cx, cy). """

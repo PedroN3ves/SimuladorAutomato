@@ -195,9 +195,11 @@ class PilhaGUI:
         button.pack(side=tk.LEFT, padx=2)
         self.mode_buttons[icon_name] = button
         Tooltip(button, tooltip_text)
-        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m, pinned=False))
-        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode, pinned=False))
 
+        # ***** INÍCIO DA CORREÇÃO *****
+        button.bind("<Enter>", lambda e, m=icon_name: self._set_mode(m, pinned=False), add='+')
+        button.bind("<Leave>", lambda e: self._set_mode(self.pinned_mode, pinned=False), add='+')
+        # ***** FIM DA CORREÇÃO *****
 
     def _build_canvas(self):
         """ Constrói o canvas principal. """
@@ -255,9 +257,14 @@ class PilhaGUI:
     def _set_mode(self, new_mode, pinned=False):
         """ Define o modo de operação e atualiza UI. """
         if pinned:
-            if self.pinned_mode == new_mode: self.pinned_mode = "select"; new_mode = "select"
-            else: self.pinned_mode = new_mode
-        self.mode = new_mode
+            # Se clicar no botão já ativo, desativa (volta para 'select')
+            if self.pinned_mode == new_mode:
+                self.pinned_mode = "select"
+                new_mode = "select" # Atualiza o modo corrente também
+            else: # Senão, ativa o novo modo
+                self.pinned_mode = new_mode
+        self.mode = new_mode # Atualiza sempre o modo corrente (para hover)
+
 
         cursor_map = { # Cursor do mouse
             "add_state": "crosshair", "add_transition_src": "hand2",
@@ -273,8 +280,9 @@ class PilhaGUI:
             "delete_state": "Modo: Excluir Estado",
             "delete_transition": "Modo: Excluir Transição" # Novo
         }
-        self.canvas.config(cursor=cursor_map.get(self.mode, "arrow"))
-        self.mode_label.config(text=mode_text_map.get(self.mode, "Modo: Selecionar"))
+        # Usa self.pinned_mode para o cursor e texto, pois self.mode pode ser temporário (hover)
+        self.canvas.config(cursor=cursor_map.get(self.pinned_mode, "arrow"))
+        self.mode_label.config(text=mode_text_map.get(self.pinned_mode, "Modo: Selecionar"))
         self._update_mode_button_styles()
 
 
@@ -295,7 +303,7 @@ class PilhaGUI:
         try:
             with open(path, "r", encoding="utf-8") as f: snapshot = f.read()
             self.automato, self.positions = restore_from_pda_snapshot(snapshot)
-            self.current_filepath = path; self.root.title(f"Editor PDA - {path}")
+            self.current_filepath = path; self.root.title(f"Editor PDA - {os.path.basename(path)}")
             self.undo_stack = [snapshot]; self.redo_stack.clear()
             self.draw_all(); self.center_view()
             self.status.config(text=f"Arquivo '{os.path.basename(path)}' carregado.")
@@ -305,16 +313,22 @@ class PilhaGUI:
         if not self.current_filepath: self.cmd_save_as()
         else:
             try:
-                self._push_undo_snapshot()
-                if self.undo_stack:
-                     with open(self.current_filepath, "w", encoding="utf-8") as f: f.write(self.undo_stack[-1])
-                     self.status.config(text=f"Salvo em '{os.path.basename(self.current_filepath)}'.")
+                # Usa o snapshot mais recente da pilha de undo para salvar
+                snap = snapshot_of_pda(self.automato, self.positions)
+                with open(self.current_filepath, "w", encoding="utf-8") as f:
+                    f.write(snap)
+                # Garante que o estado salvo esteja no topo do undo
+                if not self.undo_stack or self.undo_stack[-1] != snap:
+                    self.undo_stack.append(snap)
+                    if len(self.undo_stack) > 50: self.undo_stack.pop(0)
+                    self.redo_stack.clear() # Limpa redo ao salvar
+                self.status.config(text=f"Salvo em '{os.path.basename(self.current_filepath)}'.")
             except Exception as e: messagebox.showerror("Erro Salvar", f"Falha:\n{e}", parent=self.root)
 
     def cmd_save_as(self):
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("PDA Files", "*.json"), ("All", "*.*")])
         if not path: return
-        self.current_filepath = path; self.root.title(f"Editor PDA - {path}")
+        self.current_filepath = path; self.root.title(f"Editor PDA - {os.path.basename(path)}")
         self.cmd_save()
 
     def cmd_export_tikz(self): messagebox.showinfo("Exportar", "Exportação TikZ não implementada para PDA.", parent=self.root)
@@ -363,15 +377,17 @@ class PilhaGUI:
         self.sim_playing = not self.sim_playing
         if self.sim_playing:
             self.status.config(text="Reproduzindo...")
-            if self.sim_step >= len(self.history) - 1: self.cmd_start_simulation()
+            if self.sim_step >= len(self.history) - 1: self.cmd_start_simulation() # Reinicia se já terminou
             self._playback_step()
-        else: self.status.config(text="Pausado.")
+        else:
+            self.status.config(text="Pausado.")
 
     def _playback_step(self):
         if self.sim_playing and self.sim_step < len(self.history) - 1:
             self.cmd_step(); self.root.after(ANIM_MS, self._playback_step)
-        elif self.sim_playing:
-            self.sim_playing = False; self.cmd_step()
+        elif self.sim_playing: # Chegou ao fim durante a reprodução
+            self.sim_playing = False
+            self.cmd_step() # Mostra o último estado/resultado
             self.status.config(text="Reprodução finalizada.")
 
     def cmd_reset_sim(self):
@@ -395,7 +411,8 @@ class PilhaGUI:
             s_name = f"q{len(self.automato.states)}"
             self._push_undo_snapshot(); self.automato.add_state(s_name); self.positions[s_name] = (cx, cy); self.draw_all()
             self.status.config(text=f"Estado '{s_name}' adicionado.")
-            return # Permite adicionar mais
+            # Não volta para select, permite adicionar mais
+            return
 
         if self.mode == "set_start" and clicked_state:
             self._push_undo_snapshot(); self.automato.start_state = clicked_state; self._set_mode("select", pinned=True); self.draw_all()
@@ -429,18 +446,21 @@ class PilhaGUI:
                     read_part, push_part = label.split('/', 1)
                     parts = read_part.split(',', 1)
                     input_sym = parts[0].strip(); pop_sym = parts[1].strip() if len(parts) > 1 else EPSILON
-                    input_final = input_sym.replace('ε', EPSILON) or EPSILON
-                    pop_final = pop_sym.replace('ε', EPSILON) or EPSILON
-                    push_final = push_part.strip().replace('ε', EPSILON) or EPSILON
+                    # Trata ε e & como EPSILON, string vazia também como EPSILON
+                    input_final = (input_sym.replace('ε', EPSILON) or EPSILON) if input_sym else EPSILON
+                    pop_final = (pop_sym.replace('ε', EPSILON) or EPSILON) if pop_sym else EPSILON
+                    push_final = (push_part.strip().replace('ε', EPSILON) or EPSILON) if push_part.strip() else EPSILON # Se push for vazio, é EPSILON
+
                     self._push_undo_snapshot(); self.automato.add_transition(src, input_final, pop_final, dst, push_final); self.draw_all()
                     self.status.config(text=f"Transição {src} -> {dst} adicionada.")
-                except (ValueError, IndexError) as e: messagebox.showerror("Erro Formato", f"Formato inválido.\nDetalhe: {e}", parent=self.root)
+                except (ValueError, IndexError) as e: messagebox.showerror("Erro Formato", f"Formato inválido. Use 'entrada, desempilha / empilha'.\nDetalhe: {e}", parent=self.root)
             else: self.status.config(text="Adição cancelada.")
             self._set_mode("select", pinned=True); self.transition_src = None
             return
 
-        if clicked_state: self.dragging = (clicked_state, cx, cy)
-        else: self.dragging = None
+        # Modo select ou clique no vazio
+        if clicked_state: self.dragging = (clicked_state, cx, cy) # Inicia arrasto
+        else: self.dragging = None # Cancela arrasto
 
     def on_canvas_drag(self, event):
         if self.dragging:
@@ -449,7 +469,7 @@ class PilhaGUI:
             self.positions[sid] = (x0 + dx, y0 + dy); self.dragging = (sid, cx, cy); self.draw_all()
 
     def on_canvas_release(self, event):
-        if self.dragging: self._push_undo_snapshot()
+        if self.dragging: self._push_undo_snapshot() # Salva posição após arrastar
         self.dragging = None
 
     def on_right_click(self, event):
@@ -512,30 +532,40 @@ class PilhaGUI:
         if messagebox.askyesno("Excluir Transições", f"Excluir TODAS as transições de '{src}' para '{dst}'?", parent=self.root):
             modified = False
             new_transitions = defaultdict(set)
+            # Reconstrói o dicionário de transições, omitindo aquelas de src para dst
             for key, destinations in self.automato.transitions.items():
                 s_key, _, _ = key
                 if s_key == src:
+                    # Filtra os destinos, mantendo apenas os que NÃO vão para 'dst'
                     kept_dests = {(d_state, push) for d_state, push in destinations if d_state != dst}
-                    if len(kept_dests) < len(destinations): modified = True
-                    if kept_dests: new_transitions[key] = kept_dests
-                else: new_transitions[key] = destinations
+                    if len(kept_dests) < len(destinations): modified = True # Marca que algo foi removido
+                    if kept_dests: new_transitions[key] = kept_dests # Adiciona de volta se ainda sobraram destinos
+                else:
+                    new_transitions[key] = destinations # Mantém transições de outras origens intactas
             if modified:
-                self._push_undo_snapshot(); self.automato.transitions = new_transitions; self.draw_all()
+                self._push_undo_snapshot()
+                self.automato.transitions = new_transitions
+                self.draw_all()
                 self.status.config(text=f"Transições de {src} para {dst} excluídas.")
-            else: self.status.config(text="Nenhuma transição encontrada.")
+            else:
+                self.status.config(text="Nenhuma transição encontrada.")
     # ------------------
 
     def _edit_edge(self, src: str, dst: str):
         """ Edita TODAS as transições entre src e dst usando um diálogo. """
         current_labels = []
+        # Coleta todas as transições existentes de src para dst
         for (s, inp, pop), destinations in self.automato.transitions.items():
             if s == src:
                 for d_state, push in destinations:
                     if d_state == dst:
-                        inp_disp = inp.replace(EPSILON, "ε") or "ε"; pop_disp = pop.replace(EPSILON, "ε") or "ε"; push_disp = push.replace(EPSILON, "ε") or "ε"
+                        inp_disp = inp.replace(EPSILON, "ε") or "ε"
+                        pop_disp = pop.replace(EPSILON, "ε") or "ε"
+                        push_disp = push.replace(EPSILON, "ε") or "ε"
                         current_labels.append(f"{inp_disp},{pop_disp}/{push_disp}")
         initial_value = "\n".join(sorted(current_labels))
 
+        # Cria diálogo para edição
         dialog = tk.Toplevel(self.root); dialog.title(f"Editar {src} -> {dst}"); dialog.transient(self.root); dialog.grab_set(); dialog.geometry("400x300")
         tk.Label(dialog, text="Transições (uma por linha):\nFormato: 'entrada, desempilha / empilha' (use ε para vazio)", justify="left").pack(pady=5)
         text_widget = tk.Text(dialog, wrap="word", height=10, width=45, font=("Courier", 10)); text_widget.pack(pady=5, padx=10, expand=True, fill="both"); text_widget.insert("1.0", initial_value)
@@ -547,30 +577,36 @@ class PilhaGUI:
 
         if new_labels_str is not None:
             self._push_undo_snapshot()
-            # Remove antigas transições src -> dst
-            keys_to_del = []; keys_to_mod = {}
+            # Remove antigas transições src -> dst (reutiliza a lógica de _delete_edge, mas sem confirmação)
+            keys_to_del = [] # Chaves (src, inp, pop) a remover completamente
+            keys_to_mod = {} # Chaves a modificar (remover apenas o destino dst)
             for key, dests in self.automato.transitions.items():
                 s_key, _, _ = key
                 if s_key == src:
-                    kept = {(d, p) for d, p in dests if d != dst}
-                    if len(kept) < len(dests): # Se alguma foi removida
-                        if not kept: keys_to_del.append(key)
-                        else: keys_to_mod[key] = kept
-            for k in keys_to_del: del self.automato.transitions[k]
-            for k, v in keys_to_mod.items(): self.automato.transitions[k] = v
+                    dests_to_dst = {(d, p) for d, p in dests if d == dst}
+                    dests_other = dests - dests_to_dst
+                    if dests_to_dst:
+                        if not dests_other: keys_to_del.append(key)
+                        else: keys_to_mod[key] = dests_other
+            for k in keys_to_del:
+                if k in self.automato.transitions: del self.automato.transitions[k]
+            for k, v in keys_to_mod.items():
+                if k in self.automato.transitions: self.automato.transitions[k] = v
 
-            # Adiciona novas
+            # Adiciona novas transições baseadas no texto editado
             errors = []
             for i, line in enumerate([ln.strip() for ln in new_labels_str.split('\n') if ln.strip()]):
                 if '/' in line:
                     try:
                         read, push = line.split('/', 1); parts = read.split(',', 1)
                         inp = parts[0].strip(); pop = parts[1].strip() if len(parts) > 1 else "ε"
-                        inp_f = inp.replace('ε', EPSILON) or EPSILON; pop_f = pop.replace('ε', EPSILON) or EPSILON
-                        push_f = push.strip().replace('ε', EPSILON) or EPSILON
+                        inp_f = (inp.replace('ε', EPSILON) or EPSILON) if inp else EPSILON
+                        pop_f = (pop.replace('ε', EPSILON) or EPSILON) if pop else EPSILON
+                        push_f = (push.strip().replace('ε', EPSILON) or EPSILON) if push.strip() else EPSILON
                         self.automato.add_transition(src, inp_f, pop_f, dst, push_f)
                     except (ValueError, IndexError): errors.append(f"Linha {i+1}: '{line}'")
                 elif line: errors.append(f"Linha {i+1}: '{line}' (falta '/')")
+
             if errors: messagebox.showwarning("Erro Formato", "Ignoradas:\n" + "\n".join(errors), parent=self.root)
             self.draw_all(); self.status.config(text=f"Transições {src}->{dst} atualizadas.")
 
@@ -596,11 +632,12 @@ class PilhaGUI:
 
     def _find_state_at(self, cx, cy):
         for sid, (sx, sy) in self.positions.items():
-            if math.hypot(cx - sx, cy - sy) <= 24: return sid # Raio lógico 24
+            if math.hypot(cx - sx, cy - sy) <= STATE_RADIUS: return sid # Raio lógico
         return None
 
     def _find_edge_at(self, cx, cy):
-        min_dist_sq_logic = (20 / self.scale)**2 / (self.scale**2) # Tolerância lógica^2
+        # Aumenta a tolerância um pouco para facilitar o clique nos rótulos
+        min_dist_sq_logic = (25 / self.scale)**2 / (self.scale**2) # Tolerância lógica^2
         found = None; current_min = float('inf')
         for (src, dst), info in self.edge_widgets.items():
             txl, tyl = info.get("text_pos", (None, None))
@@ -623,18 +660,24 @@ class PilhaGUI:
         # Pilha
         canvas.create_text(10, 15, text="Pilha:", anchor="nw", font=("Helvetica", 10, "bold"))
         x_p, cell_w, cell_h, base_y = 10, 30, 30, 50
-        canvas.create_line(x_p, base_y+1, x_p + 12*cell_w, base_y+1, width=1.5, fill="#555")
+        canvas.create_line(x_p, base_y+1, x_p + 12*cell_w, base_y+1, width=1.5, fill="#555") # Base da pilha
+        # Desenha até 12 últimos símbolos da pilha
         stack_draw = list(stack)[-12:]
         for i, sym in enumerate(stack_draw):
-            x1 = x_p + i * cell_w; fill = "#e0f2fe" if i == len(stack_draw)-1 else "#ffffff"
+            x1 = x_p + i * cell_w
+            fill = "#e0f2fe" if i == len(stack_draw)-1 else "#ffffff" # Destaca o topo
             canvas.create_rectangle(x1, base_y - cell_h, x1 + cell_w, base_y, fill=fill, outline="#7dd3fc", width=1)
             canvas.create_text(x1 + cell_w/2, base_y - cell_h/2, text=sym.replace(EPSILON, "ε"), font=("Courier", 12))
         if not stack_draw: canvas.create_text(x_p+cell_w/2, base_y-cell_h/2, text="[vazia]", font=("Courier",10), fill="#888")
 
-        # Fita
-        x_f_lbl = x_p + 12*cell_w + 30; canvas.create_text(x_f_lbl, 15, text="Entrada Restante:", anchor="nw", font=("Helvetica", 10, "bold"))
-        input_show = rem_input or "ε"; x_f = x_f_lbl
+        # Fita (Entrada Restante)
+        x_f_lbl = x_p + 12*cell_w + 30 # Posição do label da fita
+        canvas.create_text(x_f_lbl, 15, text="Entrada Restante:", anchor="nw", font=("Helvetica", 10, "bold"))
+        input_show = rem_input or "ε"
+        x_f = x_f_lbl # Posição inicial da fita
+        # Cabeça de leitura (triângulo)
         canvas.create_polygon(x_f + cell_w/2, base_y - cell_h - 5, x_f + cell_w/2 - 5, base_y - cell_h - 15, x_f + cell_w/2 + 5, base_y - cell_h - 15, fill="black")
+        # Desenha até 15 próximos símbolos da entrada
         for i, sym in enumerate(input_show[:15]):
             x1 = x_f + i * cell_w; fill = "#f1f5f9"
             canvas.create_rectangle(x1, base_y - cell_h, x1 + cell_w, base_y, fill=fill, outline="#cbd5e1")
@@ -649,10 +692,12 @@ class PilhaGUI:
         agg = defaultdict(list)
         for (src, inp, pop), destinations in self.automato.transitions.items():
             for (dst, push) in destinations:
-                inp_d = inp.replace(EPSILON,'ε') or 'ε'; pop_d = pop.replace(EPSILON,'ε') or 'ε'; push_d = push.replace(EPSILON,'ε') or 'ε'
+                inp_d = inp.replace(EPSILON,'ε') or 'ε'
+                pop_d = pop.replace(EPSILON,'ε') or 'ε'
+                push_d = push.replace(EPSILON,'ε') or 'ε'
                 agg[(src, dst)].append(f"{inp_d},{pop_d}/{push_d}")
 
-        rad_logic = 24 # Raio lógico
+        rad_logic = STATE_RADIUS # Raio lógico
         rad_view = rad_logic * self.scale # Raio visual
 
         # Desenha Arestas
@@ -664,17 +709,23 @@ class PilhaGUI:
             display_labels = sorted(labels)
 
             if src == dst: # Laço
-                loop_rx, loop_ry = rad_view*1.2, rad_view*1.6; cx, cy = x1, y1 - loop_ry*0.8
+                # Ajustes para posicionamento do laço e texto
+                loop_rx, loop_ry = rad_view*1.2, rad_view*1.6
+                cx, cy = x1, y1 - loop_ry*0.8 # Centro superior do laço
                 p1=(x1-rad_view*0.5, y1-rad_view*0.8); c1=(cx-loop_rx, cy-loop_ry); c2=(cx+loop_rx, cy-loop_ry); p2=(x1+rad_view*0.5, y1-rad_view*0.8)
                 self.canvas.create_line(p1, c1, c2, p2, smooth=True, arrow=tk.LAST, width=w, fill=clr)
-                tx, ty = cx, cy - loop_ry*0.9; tid = self.canvas.create_text(tx, ty, text="\n".join(display_labels), fill=clr, justify=tk.CENTER, font=("Helvetica", 9))
+                tx, ty = cx, cy - loop_ry*0.9 # Posição do texto acima do laço
+                tid = self.canvas.create_text(tx, ty, text="\n".join(display_labels), fill=clr, justify=tk.CENTER, font=("Helvetica", 9))
                 txl, tyl = self._to_canvas(tx, ty); self.edge_widgets[(src, dst)] = {"text_pos": (txl, tyl)}
                 self.canvas.tag_bind(tid, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
             else: # Normal
                 dx, dy = x2 - x1, y2 - y1; dist = math.hypot(dx, dy) or 1; ux, uy = dx/dist, dy/dist
-                bend = 0.25 if (dst, src) in agg else 0
+                bend = 0.25 if (dst, src) in agg else 0 # Curvatura se houver seta de volta
+                # Pontos inicial e final na borda dos círculos
                 sx, sy = x1+ux*rad_view, y1+uy*rad_view; ex, ey = x2-ux*rad_view, y2-uy*rad_view
+                # Ponto de controle da curva
                 mx, my = (sx + ex)/2, (sy + ey)/2; cx_ctrl, cy_ctrl = mx - uy*dist*bend, my + ux*dist*bend
+                # Posição do texto perto do ponto de controle
                 txt_off = 15; tx, ty = cx_ctrl - uy * txt_off, cy_ctrl + ux * txt_off
                 self.canvas.create_line(sx, sy, cx_ctrl, cy_ctrl, ex, ey, smooth=True, arrow=tk.LAST, width=w, fill=clr)
                 tid = self.canvas.create_text(tx, ty, text="\n".join(display_labels), fill=clr, justify=tk.CENTER, font=("Helvetica", 9))
@@ -686,15 +737,17 @@ class PilhaGUI:
             if sid not in self.positions: continue
             xl, yl = self.positions[sid]; x, y = self._from_canvas(xl, yl)
             is_start=(sid==self.automato.start_state); is_final=(sid in self.automato.final_states); is_active=(sid==active_state)
-            fill, outl, wd = ("#e0f2fe", "#0284c7", 3) if is_active else ("white", "black", 2)
+            fill, outl, wd = ("#e0f2fe", "#0284c7", 3) if is_active else ("white", "black", 2) # Destaque se ativo
             self.canvas.create_oval(x-rad_view, y-rad_view, x+rad_view, y+rad_view, fill=fill, outline=outl, width=wd)
-            if is_final: self.canvas.create_oval(x-(rad_view-4), y-(rad_view-4), x+(rad_view-4), y+(rad_view-4), outline="black", width=1)
+            if is_final: # Círculo interno para estado final
+                self.canvas.create_oval(x-(rad_view-4), y-(rad_view-4), x+(rad_view-4), y+(rad_view-4), outline="black", width=1)
             self.canvas.create_text(x, y, text=sid, font=FONT) # Usa a constante FONT
-            if is_start: self.canvas.create_line(x-rad_view*2, y, x-rad_view, y, arrow=tk.LAST, width=2)
+            if is_start: # Seta inicial
+                self.canvas.create_line(x-rad_view*2, y, x-rad_view, y, arrow=tk.LAST, width=2)
 
-        # Indicador Resultado
+        # Indicador Resultado da Simulação
         if self.result_indicator:
-            clr = "#16a34a" if self.result_indicator == "ACEITA" else "#dc2626"
+            clr = "#16a34a" if self.result_indicator == "ACEITA" else "#dc2626" # Verde ou Vermelho
             self.canvas.create_text(self.canvas.winfo_width() - 10, 20, text=self.result_indicator, font=("Helvetica", 16, "bold"), fill=clr, anchor="ne")
 
     # --- Métodos Undo/Redo ---
@@ -719,5 +772,3 @@ class PilhaGUI:
             self.automato, self.positions = restore_from_pda_snapshot(snap)
             self.draw_all(); self.status.config(text="Refeito.")
         else: self.status.config(text="Nada para refazer.")
-
-# --- Fim da Classe PilhaGUI ---
