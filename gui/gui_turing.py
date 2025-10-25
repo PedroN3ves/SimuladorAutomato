@@ -22,7 +22,7 @@ from core.maquina_turing import (
 
 # --- CONSTANTES ---
 STATE_RADIUS = 24
-FONT = ("Helvetica", 11)
+FONT = ("Helvetica", 13)
 ANIM_MS = 300 # Milissegundos para animação da simulação
 
 # Símbolo para exibição do "branco" na GUI, que será convertido para BLANK_SYMBOL
@@ -432,17 +432,52 @@ class TuringGUI:
             self.status.config(text=f"Origem {clicked_state}. Clique no destino.")
             return
 
+        # --- INÍCIO DA MODIFICAÇÃO: Substituído simpledialog por Toplevel ---
         if self.mode == "add_transition_dst" and clicked_state:
             src, dst = self.transition_src, clicked_state
-            label = simpledialog.askstring("Transição de Turing",
-                                           f"Formato: 'lido / escrito, direcao'\n(Use {DISPLAY_BLANK} ou deixe em branco para {DISPLAY_BLANK})\nEx: a / b, R",
-                                           parent=self.root)
+            
+            label_result = [None] # Lista mutável para armazenar resultado
+
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Adicionar Transição de Turing")
+            dialog.geometry("450x220") # Tamanho maior
+            dialog.transient(self.root) # Mantém no topo
+            dialog.grab_set() # Modal
+
+            # Instruções
+            instructions = f"Formato: 'lido / escrito, direcao'\n(Use {DISPLAY_BLANK} ou deixe em branco para {DISPLAY_BLANK})\nEx: a / b, R"
+            tk.Label(dialog, text=f"Transição de '{src}' para '{dst}':\n{instructions}", justify="left").pack(pady=10, padx=12)
+
+            # Campo de entrada
+            entry = ttk.Entry(dialog, width=50, font=("Helvetica", 10))
+            entry.pack(pady=5, padx=12, fill="x", expand=True)
+            entry.focus_set() # Foca no campo de entrada
+
+            def on_ok():
+                label_result[0] = entry.get()
+                dialog.destroy()
+
+            def on_cancel():
+                dialog.destroy() # label_result[0] permanece None
+
+            # Botões OK/Cancelar
+            btn_frame = tk.Frame(dialog)
+            btn_frame.pack(pady=10)
+            ttk.Button(btn_frame, text="OK", command=on_ok, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="Cancelar", command=on_cancel).pack(side=tk.LEFT, padx=5)
+            
+            dialog.bind("<Return>", lambda e: on_ok()) # Enter confirma
+            dialog.bind("<Escape>", lambda e: on_cancel()) # Esc cancela
+
+            dialog.wait_window() # Espera o diálogo fechar
+            label = label_result[0] # Pega o resultado
+
+            # Lógica de parsing (exatamente como antes)
             if label:
                 try:
                     read_part, rest_part = label.split('/', 1)
                     write_part, dir_part = rest_part.split(',', 1)
 
-                    # Implementa a lógica de "deixar em branco"
                     read_final = read_part.strip().replace(DISPLAY_BLANK, BLANK_SYMBOL) or BLANK_SYMBOL
                     write_final = write_part.strip().replace(DISPLAY_BLANK, BLANK_SYMBOL) or BLANK_SYMBOL
                     dir_final = dir_part.strip().upper()
@@ -456,9 +491,12 @@ class TuringGUI:
                     self.status.config(text=f"Transição {src} -> {dst} adicionada.")
                 except (ValueError, IndexError) as e:
                     messagebox.showerror("Erro Formato", f"Formato inválido. Use 'lido / escrito, direcao'.\nDetalhe: {e}", parent=self.root)
-            else: self.status.config(text="Adição cancelada.")
+            else: 
+                self.status.config(text="Adição cancelada.")
+            
             self._set_mode("select", pinned=True); self.transition_src = None
             return
+        # --- FIM DA MODIFICAÇÃO ---
 
         if clicked_state: self.dragging = (clicked_state, cx, cy)
         else: self.dragging = None
@@ -554,13 +592,16 @@ class TuringGUI:
                 current_labels.append(f"{read_d} / {write_d}, {move}")
         initial_value = "\n".join(sorted(current_labels))
 
-        dialog = tk.Toplevel(self.root); dialog.title(f"Editar {src} -> {dst}"); dialog.transient(self.root); dialog.grab_set(); dialog.geometry("400x300")
+        # --- MODIFICAÇÃO: Aumentado o tamanho do diálogo de edição ---
+        dialog = tk.Toplevel(self.root); dialog.title(f"Editar {src} -> {dst}"); dialog.transient(self.root); dialog.grab_set(); dialog.geometry("500x400") # <-- Tamanho aumentado
         tk.Label(dialog, text=f"Transições (uma por linha):\nFormato: 'lido / escrito, direcao' (use {DISPLAY_BLANK} ou branco)", justify="left").pack(pady=5)
-        text_widget = tk.Text(dialog, wrap="word", height=10, width=45, font=("Courier", 10)); text_widget.pack(pady=5, padx=10, expand=True, fill="both"); text_widget.insert("1.0", initial_value)
+        text_widget = tk.Text(dialog, wrap="word", height=10, width=55, font=("Courier", 10)); text_widget.pack(pady=5, padx=10, expand=True, fill="both"); text_widget.insert("1.0", initial_value)
+        # --- FIM DA MODIFICAÇÃO ---
+        
         new_labels_str = None
         def on_ok(): nonlocal new_labels_str; new_labels_str = text_widget.get("1.0", tk.END).strip(); dialog.destroy()
         def on_cancel(): dialog.destroy()
-        btn_frame = tk.Frame(dialog); btn_frame.pack(pady=5); ttk.Button(btn_frame, text="OK", command=on_ok).pack(side=tk.LEFT, padx=5); ttk.Button(btn_frame, text="Cancelar", command=on_cancel).pack(side=tk.LEFT, padx=5)
+        btn_frame = tk.Frame(dialog); btn_frame.pack(pady=5); ttk.Button(btn_frame, text="OK", command=on_ok, style="Accent.TButton").pack(side=tk.LEFT, padx=5); ttk.Button(btn_frame, text="Cancelar", command=on_cancel).pack(side=tk.LEFT, padx=5)
         dialog.wait_window()
 
         if new_labels_str is not None:

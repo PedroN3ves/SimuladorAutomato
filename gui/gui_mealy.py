@@ -15,7 +15,7 @@ from core.maquina_mealy import MaquinaMealy, EPSILON
 from PIL import Image, ImageTk, ImageEnhance
 
 STATE_RADIUS = 24
-FONT = ("Helvetica", 11)
+FONT = ("Helvetica", 13) # <-- FONTE AUMENTADA
 ACTIVE_MODE_COLOR = "#dbeafe"
 DEFAULT_BTN_COLOR = "SystemButtonFace"
 ANIM_MS = 400 # Milissegundos por passo na animação
@@ -290,6 +290,48 @@ class MealyGUI:
         # A status bar é atualizada pelos comandos individuais (cmd_*)
         self._update_mode_button_styles() # Atualiza destaque dos botões
 
+    # --- DIÁLOGO CUSTOMIZADO (HELPER) ---
+    def _ask_custom_string(self, title, prompt, initial_value=""):
+        """
+        Cria um diálogo Toplevel customizado para substituir simpledialog.askstring.
+        Retorna a string inserida ou None se cancelado.
+        """
+        result_val = [None] # Usa lista para ser mutável
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.geometry("400x200") # Tamanho maior
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Adiciona fonte maior ao Label
+        tk.Label(dialog, text=prompt, justify="left", font=("Helvetica", 12)).pack(pady=10, padx=10)
+        
+        # Adiciona fonte maior ao Entry
+        entry = ttk.Entry(dialog, width=50, font=("Helvetica", 12))
+        entry.pack(pady=5, padx=10, fill="x", expand=True)
+        entry.insert(0, initial_value)
+        entry.focus_set()
+
+        def on_ok():
+            result_val[0] = entry.get()
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy() # result_val[0] permanece None
+            
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="OK", command=on_ok, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancelar", command=on_cancel).pack(side=tk.LEFT, padx=5)
+        
+        dialog.bind("<Return>", lambda e: on_ok())
+        dialog.bind("<Escape>", lambda e: on_cancel())
+
+        dialog.wait_window()
+        return result_val[0]
+    # --- FIM DO DIÁLOGO CUSTOMIZADO ---
+
     # --- Comandos para os botões ---
     def cmd_add_state(self):
         self._set_mode("add_state", pinned=True)
@@ -353,7 +395,11 @@ class MealyGUI:
         self.cmd_save()
 
     def cmd_quick_simulate(self):
-        input_str = simpledialog.askstring("Simulação Rápida", "Digite a cadeia de entrada:", parent=self.root)
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        input_str = self._ask_custom_string(
+            "Simulação Rápida", 
+            "Digite a cadeia de entrada:"
+        )
         if input_str is None: return
 
         if not self.mealy_machine.start_state:
@@ -453,7 +499,13 @@ class MealyGUI:
         if self.mode == "add_transition_dst":
             if clicked_state:
                 src, dst = self.transition_src, clicked_state
-                label = simpledialog.askstring("Transição", "Formato: 'entrada/saída'\n(Use & para vazio)", parent=self.root)
+                
+                # --- USA O DIÁLOGO CUSTOMIZADO ---
+                label = self._ask_custom_string(
+                    "Transição",
+                    f"Formato: 'entrada/saída' (de {src} para {dst})\n(Use & para vazio)"
+                )
+                
                 if label and '/' in label:
                     try:
                         inp, outp = label.split('/', 1)
@@ -584,8 +636,13 @@ class MealyGUI:
             self.status.config(text=f"Estado '{state}' excluído.")
 
     def _rename_state(self, old_name: str): # Já existia, adaptado levemente
-        new_name = simpledialog.askstring("Renomear Estado", f"Novo nome para '{old_name}':",
-                                          initialvalue=old_name, parent=self.root)
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        new_name = self._ask_custom_string(
+            "Renomear Estado", 
+            f"Novo nome para '{old_name}':",
+            initial_value=old_name
+        )
+        
         if new_name and new_name != old_name:
             try:
                 self._push_undo_snapshot()
@@ -630,9 +687,13 @@ class MealyGUI:
                 transitions_to_edit.append(inp)
 
         initial_value = ", ".join(sorted(current_labels))
-        new_label_str = simpledialog.askstring("Editar Transições",
+        
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        new_label_str = self._ask_custom_string(
+            "Editar Transições",
             f"Transições de {src} para {dst} (formato 'in/out', separadas por vírgula):",
-            initialvalue=initial_value, parent=self.root)
+            initial_value
+        )
 
         if new_label_str is not None:
             self._push_undo_snapshot() # Salva estado ANTES de modificar

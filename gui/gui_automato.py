@@ -14,7 +14,7 @@ from typing import Dict, Tuple, Set, List, DefaultDict, Optional
 from core.automato import Automato, EPSILON
 
 STATE_RADIUS = 24
-FONT = ("Helvetica", 11)
+FONT = ("Helvetica", 13)
 TOKEN_RADIUS = 8
 ANIM_MS = 300
 
@@ -436,8 +436,19 @@ class EditorGUI:
         if not self.automato.start_state:
             messagebox.showwarning("Converter para Gramática", "Defina o estado inicial antes de converter.", parent=self.root)
             return
+        
+        # Assume que o método to_regular_grammar() existe no core/automato.py
+        # Se não existir, esta parte precisaria ser implementada.
+        # Vamos assumir que ele existe e retorna uma string:
+        try:
+            grammar_str = self.automato.to_regular_grammar()
+        except AttributeError:
+             messagebox.showerror("Erro", "A função 'to_regular_grammar' não foi encontrada no 'core/automato.py'.", parent=self.root)
+             return
+        except Exception as e:
+             messagebox.showerror("Erro na Conversão", f"Ocorreu um erro: {e}", parent=self.root)
+             return
 
-        grammar_str = self.automato.to_regular_grammar()
 
         # Cria uma nova janela para exibir a gramática
         grammar_window = tk.Toplevel(self.root)
@@ -457,12 +468,14 @@ class EditorGUI:
         if not self.automato.start_state:
             messagebox.showwarning("Simulação Rápida", "O autômato não possui um estado inicial definido.", parent=self.root)
             return
-        input_string = simpledialog.askstring("Simulação Rápida",
-                                              "Digite a cadeia de entrada (deixe em branco para cadeia vazia ε):",
-                                              parent=self.root)
+        
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        input_string = self._ask_custom_string("Simulação Rápida", "Digite a cadeia de entrada (deixe em branco para cadeia vazia ε):")
+        
         if input_string is None:
             self.status.config(text="Simulação rápida cancelada.")
             return
+            
         accepted = self.automato.simulate(input_string)
         result_text = "ACEITA" if accepted else "REJEITADA"
         display_string = "ε" if input_string == "" else input_string
@@ -531,11 +544,17 @@ class EditorGUI:
                 self.status.config(text="Clique em um estado de origem válido.")
             return
 
+        # --- MODIFICADO: Substitui simpledialog.askstring por diálogo customizado ---
         if self.mode == "add_transition_dst":
             if clicked_state:
                 src = self.transition_src
                 dst = clicked_state
-                sym = simpledialog.askstring("Símbolos", "Símbolos separados por vírgula (use '&' para vazio):", parent=self.root)
+                
+                # --- INÍCIO DA MODIFICAÇÃO: Diálogo customizado ---
+                prompt = f"Símbolos de '{src}' para '{dst}':\n(separados por vírgula, use '&' para vazio)"
+                sym = self._ask_custom_string("Adicionar Transição", prompt)
+                # --- FIM DA MODIFICAÇÃO ---
+
                 if sym is not None:
                     syms = [s.strip() or EPSILON for s in sym.split(",")]
                     for s in syms: self.automato.add_transition(src, s, dst)
@@ -547,6 +566,7 @@ class EditorGUI:
                 self.draw_all()
             else: self.status.config(text="Clique em um estado de destino.")
             return
+        # --- FIM DA ÁREA MODIFICADA ---
 
         if self.mode == "set_start":
             if clicked_state:
@@ -630,6 +650,48 @@ class EditorGUI:
         if edge:
             self._edit_edge_label(edge[0], edge[1])
 
+    # --- DIÁLOGO CUSTOMIZADO (HELPER) ---
+    def _ask_custom_string(self, title, prompt, initial_value=""):
+        """
+        Cria um diálogo Toplevel customizado para substituir simpledialog.askstring.
+        Retorna a string inserida ou None se cancelado.
+        """
+        result_val = [None] # Usa lista para ser mutável
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.geometry("400x200") # Tamanho maior
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Adiciona fonte maior ao Label
+        tk.Label(dialog, text=prompt, justify="left", font=("Helvetica", 12)).pack(pady=10, padx=10)
+        
+        # Adiciona fonte maior ao Entry
+        entry = ttk.Entry(dialog, width=50, font=("Helvetica", 12))
+        entry.pack(pady=5, padx=10, fill="x", expand=True)
+        entry.insert(0, initial_value)
+        entry.focus_set()
+
+        def on_ok():
+            result_val[0] = entry.get()
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy() # result_val[0] permanece None
+            
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="OK", command=on_ok, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancelar", command=on_cancel).pack(side=tk.LEFT, padx=5)
+        
+        dialog.bind("<Return>", lambda e: on_ok())
+        dialog.bind("<Escape>", lambda e: on_cancel())
+
+        dialog.wait_window()
+        return result_val[0]
+    # --- FIM DO DIÁLOGO CUSTOMIZADO ---
+
     def _show_state_context_menu(self, tk_event, state):
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label=f"Definir como inicial", command=lambda: self._set_start_from_menu(state))
@@ -663,8 +725,12 @@ class EditorGUI:
 
     def _rename_state_from_menu(self, old_name: str):
         """Abre um diálogo para renomear um estado."""
-        new_name = simpledialog.askstring("Renomear Estado", f"Digite o novo nome para '{old_name}':",
-                                          initialvalue=old_name, parent=self.root)
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        new_name = self._ask_custom_string(
+            "Renomear Estado", 
+            f"Digite o novo nome para '{old_name}':",
+            initial_value=old_name
+        )
 
         if new_name and new_name != old_name:
             try:
@@ -681,7 +747,14 @@ class EditorGUI:
 
     def _edit_edge_label(self, src, dst):
         cur_label = self.edge_widgets.get((src, dst), {}).get("label", "")
-        val = simpledialog.askstring("Editar Rótulo", "Símbolos (separados por vírgula, use '&' para vazio):", initialvalue=cur_label, parent=self.root)
+        
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        val = self._ask_custom_string(
+            "Editar Rótulo", 
+            "Símbolos (separados por vírgula, use '&' para vazio):",
+            initial_value=cur_label
+        )
+        
         if val is None: return
         self._push_undo_snapshot()
         # Limpa transições antigas entre esses dois estados
@@ -890,11 +963,16 @@ class EditorGUI:
         self.status.config(text="Simulação reiniciada.")
 
     def cmd_batch_test(self):
-        text = simpledialog.askstring("Testar Múltiplas Entradas", "Palavras separadas por vírgula (ε para vazio):", parent=self.root)
-        text = simpledialog.askstring("Testar Múltiplas Entradas", "Palavras separadas por vírgula ('&' para vazio):", parent=self.root)
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        text = self._ask_custom_string(
+            "Testar Múltiplas Entradas", 
+            "Palavras separadas por vírgula ('&' para vazio):"
+        )
         if text is None: return
         items = [s.strip() for s in text.split(",")]
         results = [f"'{w}': {'ACEITO' if self.automato.simulate('' if w == '&' else w) else 'REJEITADO'}" for w in items]
+        
+        # Para resultados, o messagebox padrão ainda é aceitável
         messagebox.showinfo("Resultados dos Testes", "\n".join(results), parent=self.root)
 
     def _push_undo_snapshot(self):

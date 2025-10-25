@@ -16,7 +16,7 @@ from core.maquina_moore import MaquinaMoore, EPSILON, snapshot_of_moore, restore
 from PIL import Image, ImageTk, ImageEnhance
 
 STATE_RADIUS = 28 # Raio dos estados (um pouco maior para caber a saída)
-FONT = ("Helvetica", 11)
+FONT = ("Helvetica", 13) # <-- FONTE AUMENTADA
 ANIM_MS = 400 # Velocidade da animação (passo a passo)
 
 class Tooltip:
@@ -269,6 +269,47 @@ class MooreGUI:
         # A barra de status é atualizada pelas funções cmd_* específicas
         self._update_mode_button_styles() # Atualiza destaque visual dos botões
 
+    # --- DIÁLOGO CUSTOMIZADO (HELPER) ---
+    def _ask_custom_string(self, title, prompt, initial_value=""):
+        """
+        Cria um diálogo Toplevel customizado para substituir simpledialog.askstring.
+        Retorna a string inserida ou None se cancelado.
+        """
+        result_val = [None] # Usa lista para ser mutável
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.geometry("400x200") # Tamanho maior
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Adiciona fonte maior ao Label
+        tk.Label(dialog, text=prompt, justify="left", font=("Helvetica", 12)).pack(pady=10, padx=10)
+        
+        # Adiciona fonte maior ao Entry
+        entry = ttk.Entry(dialog, width=50, font=("Helvetica", 12))
+        entry.pack(pady=5, padx=10, fill="x", expand=True)
+        entry.insert(0, initial_value)
+        entry.focus_set()
+
+        def on_ok():
+            result_val[0] = entry.get()
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy() # result_val[0] permanece None
+            
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="OK", command=on_ok, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancelar", command=on_cancel).pack(side=tk.LEFT, padx=5)
+        
+        dialog.bind("<Return>", lambda e: on_ok())
+        dialog.bind("<Escape>", lambda e: on_cancel())
+
+        dialog.wait_window()
+        return result_val[0]
+    # --- FIM DO DIÁLOGO CUSTOMIZADO ---
 
     # --- Funções de Comando (cmd_*) ---
     def cmd_add_state(self):
@@ -454,7 +495,13 @@ class MooreGUI:
 
         if self.mode == "add_state":
             state_name = f"q{len(self.moore_machine.states)}"
-            output_sym = simpledialog.askstring("Saída do Estado", "Símbolo de saída para o novo estado:", parent=self.root)
+            
+            # --- USA O DIÁLOGO CUSTOMIZADO ---
+            output_sym = self._ask_custom_string(
+                "Saída do Estado",
+                "Símbolo de saída para o novo estado:"
+            )
+            
             if output_sym is not None: # Se o usuário não cancelou
                 self._push_undo_snapshot() # Salva antes de adicionar
                 self.positions[state_name] = (cx, cy)
@@ -491,7 +538,13 @@ class MooreGUI:
         if self.mode == "add_transition_dst":
             if clicked_state:
                 src, dst = self.transition_src, clicked_state
-                inp = simpledialog.askstring("Transição", "Símbolo de entrada:", parent=self.root)
+                
+                # --- USA O DIÁLOGO CUSTOMIZADO ---
+                inp = self._ask_custom_string(
+                    "Transição", 
+                    f"Símbolo de entrada (de {src} para {dst}):"
+                )
+                
                 if inp is not None: # Se não cancelou
                     inp_final = inp.strip() or EPSILON # Usa EPSILON se vazio
                     self._push_undo_snapshot() # Salva antes
@@ -595,7 +648,13 @@ class MooreGUI:
 
     def _rename_state(self, old_name: str):
         """ Renomeia o estado (ação do menu). """
-        new_name = simpledialog.askstring("Renomear", f"Novo nome para '{old_name}':", initialvalue=old_name, parent=self.root)
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        new_name = self._ask_custom_string(
+            "Renomear", 
+            f"Novo nome para '{old_name}':",
+            initial_value=old_name
+        )
+        
         if new_name and new_name != old_name:
             try:
                 self._push_undo_snapshot()
@@ -610,7 +669,14 @@ class MooreGUI:
     def _edit_state_output(self, state: str):
         """ Edita o símbolo de saída de um estado (ação do menu). """
         current_output = self.moore_machine.output_function.get(state, "")
-        new_output = simpledialog.askstring("Editar Saída", f"Símbolo de saída para '{state}':", initialvalue=current_output, parent=self.root)
+        
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        new_output = self._ask_custom_string(
+            "Editar Saída",
+            f"Símbolo de saída para '{state}':",
+            initial_value=current_output
+        )
+
         if new_output is not None: # Se não cancelou
             new_output_final = new_output.strip() or "?" # Usa '?' se vazio
             self._push_undo_snapshot()
@@ -650,9 +716,13 @@ class MooreGUI:
                 transitions_to_edit.append(inp)
 
         initial_value = ", ".join(sorted([inp.replace(EPSILON, "ε") for inp in transitions_to_edit]))
-        new_label_str = simpledialog.askstring("Editar Transições",
+        
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        new_label_str = self._ask_custom_string(
+            "Editar Transições",
             f"Símbolos de entrada de '{src}' para '{dst}' (separados por vírgula, use ε para vazio):",
-            initialvalue=initial_value, parent=self.root)
+            initial_value=initial_value
+        )
 
         if new_label_str is not None: # Se não cancelou
             self._push_undo_snapshot() # Salva antes
@@ -824,7 +894,7 @@ class MooreGUI:
             fill, outline, width = ("#e0f2fe", "#0284c7", 3) if is_active else ("white", "black", 2) # Destaque se ativo
 
             radius = STATE_RADIUS * self.scale # Raio escalado
-            self.canvas.create_oval(x-radius, y-radius, x+radius, y+radius, fill=fill, outline=outline, width=width)
+            self.canvas.create_oval(x-radius, y-radius, x+radius, y-radius, fill=fill, outline=outline, width=width)
             self.canvas.create_text(x, y, text=state_label, font=FONT, justify=tk.CENTER)
 
         # Seta Inicial

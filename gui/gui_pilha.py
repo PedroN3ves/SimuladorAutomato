@@ -17,7 +17,7 @@ from core.pilha import AutomatoPilha, EPSILON, snapshot_of_pda, restore_from_pda
 
 # --- CONSTANTES ---
 STATE_RADIUS = 24 # Raio visual dos estados
-FONT = ("Helvetica", 11) # Fonte padrão para textos nos estados e transições
+FONT = ("Helvetica", 13) # <-- FONTE AUMENTADA
 ANIM_MS = 500 # Milissegundos para animação da simulação
 
 # -------------------------
@@ -285,6 +285,47 @@ class PilhaGUI:
         self.mode_label.config(text=mode_text_map.get(self.pinned_mode, "Modo: Selecionar"))
         self._update_mode_button_styles()
 
+    # --- DIÁLOGO CUSTOMIZADO (HELPER) ---
+    def _ask_custom_string(self, title, prompt, initial_value=""):
+        """
+        Cria um diálogo Toplevel customizado para substituir simpledialog.askstring.
+        Retorna a string inserida ou None se cancelado.
+        """
+        result_val = [None] # Usa lista para ser mutável
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.geometry("400x200") # Tamanho maior
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Adiciona fonte maior ao Label
+        tk.Label(dialog, text=prompt, justify="left", font=("Helvetica", 12)).pack(pady=10, padx=10)
+        
+        # Adiciona fonte maior ao Entry
+        entry = ttk.Entry(dialog, width=50, font=("Helvetica", 12))
+        entry.pack(pady=5, padx=10, fill="x", expand=True)
+        entry.insert(0, initial_value)
+        entry.focus_set()
+
+        def on_ok():
+            result_val[0] = entry.get()
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy() # result_val[0] permanece None
+            
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="OK", command=on_ok, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancelar", command=on_cancel).pack(side=tk.LEFT, padx=5)
+        
+        dialog.bind("<Return>", lambda e: on_ok())
+        dialog.bind("<Escape>", lambda e: on_cancel())
+
+        dialog.wait_window()
+        return result_val[0]
+    # --- FIM DO DIÁLOGO CUSTOMIZADO ---
 
     # --- Comandos Botões ---
     def cmd_add_state(self): self._set_mode("add_state", pinned=True); self.status.config(text="Clique no canvas para adicionar estado.")
@@ -440,7 +481,13 @@ class PilhaGUI:
 
         if self.mode == "add_transition_dst" and clicked_state:
             src, dst = self.transition_src, clicked_state
-            label = simpledialog.askstring("Transição de Pilha", "Formato: 'entrada, desempilha / empilha'\n(Use & ou ε para vazio)", parent=self.root)
+            
+            # --- USA O DIÁLOGO CUSTOMIZADO ---
+            label = self._ask_custom_string(
+                "Transição de Pilha",
+                f"Formato: 'entrada, desempilha / empilha' (de {src} para {dst})\n(Use & ou ε para vazio)"
+            )
+
             if label:
                 try:
                     read_part, push_part = label.split('/', 1)
@@ -518,7 +565,13 @@ class PilhaGUI:
             self.draw_all(); self.status.config(text=f"Estado '{state}' excluído.")
 
     def _rename_state_from_menu(self, old_name: str):
-        new_name = simpledialog.askstring("Renomear", f"Novo nome para '{old_name}':", initialvalue=old_name, parent=self.root)
+        # --- USA O DIÁLOGO CUSTOMIZADO ---
+        new_name = self._ask_custom_string(
+            "Renomear",
+            f"Novo nome para '{old_name}':",
+            initial_value=old_name
+        )
+        
         if new_name and new_name != old_name:
             try:
                 self._push_undo_snapshot(); self.automato.rename_state(old_name, new_name)
@@ -567,8 +620,12 @@ class PilhaGUI:
 
         # Cria diálogo para edição
         dialog = tk.Toplevel(self.root); dialog.title(f"Editar {src} -> {dst}"); dialog.transient(self.root); dialog.grab_set(); dialog.geometry("400x300")
-        tk.Label(dialog, text="Transições (uma por linha):\nFormato: 'entrada, desempilha / empilha' (use ε para vazio)", justify="left").pack(pady=5)
-        text_widget = tk.Text(dialog, wrap="word", height=10, width=45, font=("Courier", 10)); text_widget.pack(pady=5, padx=10, expand=True, fill="both"); text_widget.insert("1.0", initial_value)
+        
+        # --- FONTE AUMENTADA ---
+        tk.Label(dialog, text="Transições (uma por linha):\nFormato: 'entrada, desempilha / empilha' (use ε para vazio)", justify="left", font=("Helvetica", 12)).pack(pady=5)
+        text_widget = tk.Text(dialog, wrap="word", height=10, width=45, font=("Courier", 12)); text_widget.pack(pady=5, padx=10, expand=True, fill="both"); text_widget.insert("1.0", initial_value)
+        # --- FIM DA MUDANÇA ---
+        
         new_labels_str = None
         def on_ok(): nonlocal new_labels_str; new_labels_str = text_widget.get("1.0", tk.END).strip(); dialog.destroy()
         def on_cancel(): dialog.destroy()
@@ -715,7 +772,7 @@ class PilhaGUI:
                 p1=(x1-rad_view*0.5, y1-rad_view*0.8); c1=(cx-loop_rx, cy-loop_ry); c2=(cx+loop_rx, cy-loop_ry); p2=(x1+rad_view*0.5, y1-rad_view*0.8)
                 self.canvas.create_line(p1, c1, c2, p2, smooth=True, arrow=tk.LAST, width=w, fill=clr)
                 tx, ty = cx, cy - loop_ry*0.9 # Posição do texto acima do laço
-                tid = self.canvas.create_text(tx, ty, text="\n".join(display_labels), fill=clr, justify=tk.CENTER, font=("Helvetica", 9))
+                tid = self.canvas.create_text(tx, ty, text="\n".join(display_labels), fill=clr, justify=tk.CENTER, font=("Helvetica", 11)) # <-- Fonte rótulo
                 txl, tyl = self._to_canvas(tx, ty); self.edge_widgets[(src, dst)] = {"text_pos": (txl, tyl)}
                 self.canvas.tag_bind(tid, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
             else: # Normal
@@ -728,7 +785,7 @@ class PilhaGUI:
                 # Posição do texto perto do ponto de controle
                 txt_off = 15; tx, ty = cx_ctrl - uy * txt_off, cy_ctrl + ux * txt_off
                 self.canvas.create_line(sx, sy, cx_ctrl, cy_ctrl, ex, ey, smooth=True, arrow=tk.LAST, width=w, fill=clr)
-                tid = self.canvas.create_text(tx, ty, text="\n".join(display_labels), fill=clr, justify=tk.CENTER, font=("Helvetica", 9))
+                tid = self.canvas.create_text(tx, ty, text="\n".join(display_labels), fill=clr, justify=tk.CENTER, font=("Helvetica", 11)) # <-- Fonte rótulo
                 txl, tyl = self._to_canvas(tx, ty); self.edge_widgets[(src, dst)] = {"text_pos": (txl, tyl)}
                 self.canvas.tag_bind(tid, "<Double-Button-1>", lambda e, s=src, d=dst: self._edit_edge(s, d))
 
