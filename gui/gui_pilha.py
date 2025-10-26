@@ -224,7 +224,7 @@ class PilhaGUI:
         ttk.Button(bottom, text="Play/Pausar", command=self.cmd_play_pause).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Reiniciar", command=self.cmd_reset_sim).pack(side=tk.LEFT, padx=2)
 
-        self.sim_display_canvas = tk.Canvas(bottom, height=60, bg="#f0f0f0", highlightthickness=1, highlightbackground="#cccccc")
+        self.sim_display_canvas = tk.Canvas(bottom, height=75, bg="#f0f0f0", highlightthickness=1, highlightbackground="#cccccc")
         self.sim_display_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
 
     def _build_statusbar(self):
@@ -396,7 +396,79 @@ class PilhaGUI:
         except ImportError: messagebox.showwarning("Exportar PNG", "'cairosvg' não instalado.\nUse: pip install cairosvg", parent=self.root)
         except Exception as e: messagebox.showerror("Erro PNG", f"Falha:\n{e}", parent=self.root)
 
-    def _generate_svg_text(self): return '<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"></svg>' # Placeholder
+    def _generate_svg_text(self):
+        # Gera SVG baseado nas posições atuais (espelha _draw_edges_and_states)
+        try:
+            self.canvas.update_idletasks()
+            self.canvas.update()
+        except Exception:
+            pass
+
+        w = self.canvas.winfo_width() or 800
+        h = self.canvas.winfo_height() or 600
+        state_r = STATE_RADIUS * self.scale
+
+        def esc(t):
+            return str(t).replace('&', '&amp;')
+
+        # Agrega transições por (src,dst)
+        agg = {}
+        for (src, inp, pop), destinations in self.automato.transitions.items():
+            for (dst, push) in destinations:
+                inp_d = inp.replace(EPSILON, 'ε') or 'ε'
+                pop_d = pop.replace(EPSILON, 'ε') or 'ε'
+                push_d = push.replace(EPSILON, 'ε') if push != EPSILON else 'ε'
+                label = f"{inp_d},{pop_d}/{push_d}"
+                agg.setdefault((src, dst), set()).add(label)
+
+        svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">']
+        svg.append('<defs>')
+        svg.append('<marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="5" orient="auto" markerUnits="strokeWidth">')
+        svg.append('<path d="M0,0 L0,10 L10,5 z" fill="#000" />')
+        svg.append('</marker>')
+        svg.append('</defs>')
+
+        for (src, dst), labels in agg.items():
+            if src not in self.positions or dst not in self.positions: continue
+            x1, y1 = self._from_canvas(*self.positions[src])
+            x2, y2 = self._from_canvas(*self.positions[dst])
+            label = "\n".join(sorted(list(labels)))
+            if src == dst:
+                lx = x1
+                ly = y1 - state_r - 20
+                path = f'M {x1},{y1-state_r} C {x1-30},{ly} {x1+30},{ly} {x1},{y1-state_r}'
+                svg.append(f'<path d="{path}" fill="none" stroke="black" stroke-width="1.5" marker-end="url(#arrow)"/>')
+                svg.append(f'<text x="{x1}" y="{ly-5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+            else:
+                if (dst, src) in agg:
+                    dx = x2 - x1; dy = y2 - y1; dist = (dx*dx+dy*dy)**0.5 or 1
+                    ux, uy = dx/dist, dy/dist
+                    px, py = -uy, ux
+                    offset = 20
+                    cx, cy = (x1 + x2)/2 + px*offset, (y1 + y2)/2 + py*offset
+                    path = f'M {x1},{y1} Q {cx},{cy} {x2},{y2}'
+                    svg.append(f'<path d="{path}" fill="none" stroke="black" stroke-width="1.5" marker-end="url(#arrow)"/>')
+                    txt_x, txt_y = (x1 + x2)/2 + px*(offset+10), (y1 + y2)/2 + py*(offset+10)
+                    svg.append(f'<text x="{txt_x}" y="{txt_y}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+                else:
+                    svg.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="black" stroke-width="1.5" marker-end="url(#arrow)" />')
+                    txt_x, txt_y = (x1 + x2)/2, (y1 + y2)/2
+                    svg.append(f'<text x="{txt_x}" y="{txt_y-5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+
+        for sid in sorted(self.automato.states):
+            if sid not in self.positions: continue
+            x_logic, y_logic = self.positions[sid]
+            x, y = self._from_canvas(x_logic, y_logic)
+            svg.append(f'<circle cx="{x}" cy="{y}" r="{state_r}" fill="white" stroke="black" stroke-width="2" />')
+            svg.append(f'<text x="{x}" y="{y+5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(sid)}</text>')
+
+        if self.automato.start_state and self.automato.start_state in self.positions:
+            sx, sy = self._from_canvas(*self.positions[self.automato.start_state])
+            x0 = sx - state_r*2
+            svg.append(f'<line x1="{x0}" y1="{sy}" x2="{sx-state_r}" y2="{sy}" stroke="black" stroke-width="2" marker-end="url(#arrow)" />')
+
+        svg.append('</svg>')
+        return '\n'.join(svg)
 
     # --- Comandos Simulação ---
     # ***** INÍCIO DA MODIFICAÇÃO *****
@@ -415,7 +487,7 @@ class PilhaGUI:
              start_state = self.automato.start_state if self.automato.start_state else "-"
              self.history = [(start_state, 0, start_stack)]
 
-        self.draw_all(); self.status.config(f"Simulação iniciada para '{input_str}'.")
+        self.draw_all(); self.status.config(text=f"Simulação iniciada para '{input_str}'.")
     # ***** FIM DA MODIFICAÇÃO *****
 
     # ***** INÍCIO DA MODIFICAÇÃO *****
@@ -751,41 +823,50 @@ class PilhaGUI:
         step_idx = min(self.sim_step, len(self.history) - 1)
         _, current_input_idx, stack = self.history[step_idx]
 
+        # --- Constantes de Layout ---
+        y_label = 3
+        y_base = 63
+        cell_w, cell_h = 30, 30
+
         # Pilha (Stack)
-        canvas.create_text(10, 15, text="Pilha:", anchor="nw", font=("Helvetica", 10, "bold"))
-        x_p, cell_w, cell_h, base_y = 10, 30, 30, 50
-        canvas.create_line(x_p, base_y+1, x_p + 12*cell_w, base_y+1, width=1.5, fill="#555") # Base da pilha
+        x_p = 10
+        canvas.create_text(x_p, y_label, text="Pilha:", anchor="nw", font=("Helvetica", 10, "bold"))
+        canvas.create_line(x_p, y_base + 1, x_p + 12 * cell_w, y_base + 1, width=1.5, fill="#555") # Base da pilha
+        
         # Desenha até 12 últimos símbolos da pilha (o topo é o último elemento da tupla)
         stack_draw = list(stack)[-12:]
         for i, sym in enumerate(stack_draw):
             x1 = x_p + i * cell_w
             # Destaca o topo (último elemento)
             fill = "#e0f2fe" if i == len(stack_draw)-1 else "#ffffff" 
-            canvas.create_rectangle(x1, base_y - cell_h, x1 + cell_w, base_y, fill=fill, outline="#7dd3fc", width=1)
-            canvas.create_text(x1 + cell_w/2, base_y - cell_h/2, text=sym.replace(EPSILON, "ε"), font=("Courier", 12))
-        if not stack_draw: canvas.create_text(x_p+cell_w/2, base_y-cell_h/2, text="[vazia]", font=("Courier",10), fill="#888")
+            canvas.create_rectangle(x1, y_base - cell_h, x1 + cell_w, y_base, fill=fill, outline="#7dd3fc", width=1)
+            canvas.create_text(x1 + cell_w/2, y_base - cell_h/2, text=sym.replace(EPSILON, "ε"), font=("Courier", 12))
+        if not stack_draw: canvas.create_text(x_p+cell_w/2, y_base-cell_h/2, text="[vazia]", font=("Courier",10), fill="#888")
 
         # Fita (Entrada Restante)
-        x_f_lbl = x_p + 12*cell_w + 30 # Posição do label da fita
-        canvas.create_text(x_f_lbl, 15, text="Entrada Restante:", anchor="nw", font=("Helvetica", 10, "bold"))
+        # Posiciona a fita de entrada dinamicamente no espaço restante
+        stack_width = 12 * cell_w
+        tape_start_x = x_p + stack_width + (canvas_w - (x_p + stack_width)) / 2 - 100 # Centraliza a fita no espaço restante
+        tape_start_x = max(tape_start_x, x_p + stack_width + 30) # Garante um espaçamento mínimo
+
+        canvas.create_text(tape_start_x, y_label, text="Entrada Restante:", anchor="nw", font=("Helvetica", 10, "bold"))
         
         # String restante é a partir do índice atual
         remaining_input = self.current_input_string[current_input_idx:]
         input_show = remaining_input or "ε"
         
-        x_f = x_f_lbl # Posição inicial da fita
-        
         # Cabeça de leitura (triângulo) - aponta para o INÍCIO da fita restante
-        canvas.create_polygon(x_f + cell_w/2, base_y - cell_h - 5, x_f + cell_w/2 - 5, base_y - cell_h - 15, x_f + cell_w/2 + 5, base_y - cell_h - 15, fill="black")
+        head_x = tape_start_x + cell_w / 2
+        canvas.create_polygon(head_x, y_base - cell_h - 2, head_x - 5, y_base - cell_h - 12, head_x + 5, y_base - cell_h - 12, fill="black")
         
         # Calcula quantas células da fita cabem no espaço restante
-        max_tape_cells = max(1, int((canvas_w - x_f - 10) / cell_w))
+        max_tape_cells = max(1, int((canvas_w - tape_start_x - 10) / cell_w))
         
         # Desenha os próximos símbolos da entrada (limitado pelo espaço)
         for i, sym in enumerate(input_show[:max_tape_cells]):
-            x1 = x_f + i * cell_w; fill = "#f1f5f9"
-            canvas.create_rectangle(x1, base_y - cell_h, x1 + cell_w, base_y, fill=fill, outline="#cbd5e1")
-            canvas.create_text(x1 + cell_w/2, base_y - cell_h/2, text=sym, font=("Courier", 12)) # Mostra caractere literal
+            x1 = tape_start_x + i * cell_w; fill = "#f1f5f9"
+            canvas.create_rectangle(x1, y_base - cell_h, x1 + cell_w, y_base, fill=fill, outline="#cbd5e1")
+            canvas.create_text(x1 + cell_w/2, y_base - cell_h/2, text=sym, font=("Courier", 12)) # Mostra caractere literal
             # Não substitui EPSILON aqui, pois ele não deve aparecer na entrada
     # ***** FIM DA MODIFICAÇÃO *****
 

@@ -20,7 +20,8 @@ class AutomatoPilha:
 
     def add_state(self, state: str, is_start: bool = False, is_final: bool = False):
         self.states.add(state)
-        if is_start or (self.start_state is None and not self.states) : # Define como inicial se for o primeiro
+        # Define como estado inicial se for marcado ou se for o primeiro estado adicionado
+        if is_start or (self.start_state is None and len(self.states) == 1):
             self.start_state = state
         if is_final:
             self.final_states.add(state)
@@ -105,164 +106,88 @@ class AutomatoPilha:
 
 
     # ***** INÍCIO DAS MODIFICAÇÕES (Multi-caractere) *****
-    def simulate_history(self, input_str: str) -> Tuple[List[Tuple[str, int, Tuple]], bool]:
+    def simulate_history(self, input_str: str) -> Tuple[List[Tuple[str, int, Tuple[str, ...]]], bool]:
         """
         Simula a execução e retorna o histórico de configurações para animação.
         Modificado para suportar transições com múltiplos caracteres (ex: "aa").
 
         Retorna (histórico, aceito).
-        Histórico é List[Tuple[estado, input_idx_consumido, pilha_como_tupla]]
+        Histórico é List[Tuple[estado_representativo, input_idx_consumido, pilha_representativa]]
         """
         if not self.start_state:
             return [], False
 
         # Configuração: (estado, indice_entrada, pilha_tupla)
         initial_config = (self.start_state, 0, (self.start_stack_symbol,))
-        
-        # Histórico guarda a primeira configuração viável encontrada após cada consumo de símbolo (ou no início)
-        history: List[Tuple[str, int, Tuple]] = []
-
-        # Conjunto de configurações ativas atuais (estado, indice, pilha)
+    
+        # Conjunto de configurações ativas: {(estado, indice_entrada, pilha_tupla)}
         current_configs = self._get_epsilon_closure({initial_config})
         
-        # Guarda o estado inicial no histórico
+        # O histórico armazena uma configuração representativa de cada passo
+        history: List[Tuple[str, int, Tuple[str, ...]]] = []
         if current_configs:
-            # Pega uma configuração representativa (a primeira encontrada)
             rep_state, rep_idx, rep_stack = next(iter(current_configs))
             history.append((rep_state, rep_idx, rep_stack))
-        else:
-             history.append(("-", 0, tuple())) # Caso inicial impossível
+        else: # Caso inicial impossível
+            history.append((self.start_state or "-", 0, (self.start_stack_symbol,)))
 
-        processed_indices = {0} # Índices já processados para evitar reprocessamento infinito com epsilon
-        
-        # Usa uma fila para busca em largura nas configurações possíveis
-        queue = list(current_configs)
-        
-        final_reachable_configs = set() # Configurações alcançadas após consumir toda a entrada
+        input_idx = 0
+        while input_idx < len(input_str):
+            # 1. Encontra os símbolos de transição possíveis (não-epsilon)
+            possible_symbols = {sym for (src, sym, pop) in self.transitions.keys() if sym != EPSILON}
+            sorted_symbols = sorted(list(possible_symbols), key=len, reverse=True)
 
-        visited_in_step = set() # Evita loops infinitos de epsilon no mesmo passo
+            consumed_symbol = None
+            remaining_input = input_str[input_idx:]
 
-        while queue:
-            # Pega a próxima configuração para explorar
-            current_state, current_idx, current_stack = queue.pop(0)
-
-            # Se já consumiu toda a entrada, adiciona aos finais e continua (pode haver epsilons)
-            if current_idx == len(input_str):
-                final_reachable_configs.add((current_state, current_idx, current_stack))
-                # Ainda processa epsilons a partir daqui
+            # 2. Encontra a transição mais longa que corresponde à entrada restante
+            for symbol in sorted_symbols:
+                if remaining_input.startswith(symbol):
+                    consumed_symbol = symbol
+                    break
             
-            config_tuple = (current_state, current_idx, current_stack)
-            if config_tuple in visited_in_step: continue
-            visited_in_step.add(config_tuple)
+            # 3. Se um símbolo foi consumido, calcula as próximas configurações
+            if consumed_symbol:
+                next_configs_after_move = self._move_with_symbol(current_configs, consumed_symbol)
+                current_configs = self._get_epsilon_closure(next_configs_after_move)
+                input_idx += len(consumed_symbol)
+            else:
+                # Nenhuma transição corresponde, a máquina trava
+                current_configs = set()
 
+            # 4. Se não há mais configurações possíveis, para a simulação
+            if not current_configs:
+                break
 
-            # --- 1. Tentar consumir símbolos da entrada ---
-            remaining_input = input_str[current_idx:]
-            if remaining_input:
-                # Encontra todos os símbolos de input possíveis (não-epsilon) que saem do estado atual
-                possible_symbols = set()
-                for (src, sym, pop) in self.transitions.keys():
-                    if src == current_state and sym != EPSILON:
-                        possible_symbols.add(sym)
-                
-                # Ordena do mais longo para o mais curto
-                sorted_symbols = sorted(list(possible_symbols), key=len, reverse=True)
+            # 5. Adiciona uma configuração representativa ao histórico
+            rep_state, _, rep_stack = next(iter(current_configs))
+            history.append((rep_state, input_idx, rep_stack))
 
-                moved_with_symbol = False
-                for symbol in sorted_symbols:
-                    if remaining_input.startswith(symbol):
-                        # Encontrou uma transição que consome o símbolo 'symbol'
-                        
-                        # Calcula as próximas configurações após consumir 'symbol'
-                        next_configs_after_move = self._move_with_symbol(
-                            {(current_state, current_idx, current_stack)}, # Apenas a config atual
-                            symbol
-                        )
-                        
-                        # Calcula o fecho-epsilon dessas novas configurações
-                        closure_after_move = self._get_epsilon_closure(next_configs_after_move)
+        # Verificação final de aceitação
+        accepted = False
+        if current_configs: # Verifica se não travou
+            # A cadeia é aceita se, após consumir toda a entrada, algum dos estados ativos for final
+            if input_idx == len(input_str):
+                accepted = any(state in self.final_states for state, _, _ in current_configs)
 
-                        new_idx = current_idx + len(symbol)
+        return history, accepted
 
-                        # Adiciona novas configurações à fila e ao histórico se o índice avançou
-                        if new_idx not in processed_indices:
-                             if closure_after_move:
-                                rep_state, rep_idx_actual, rep_stack = next(iter(closure_after_move))
-                                # Usa new_idx no histórico, pois representa o consumo até este ponto
-                                history.append((rep_state, new_idx, rep_stack)) 
-                                processed_indices.add(new_idx)
-                                visited_in_step.clear() # Limpa visitados para o novo índice
-                        
-                        for conf in closure_after_move:
-                             if conf not in queue and conf not in visited_in_step: # Evita adicionar duplicatas na fila
-                                queue.append(conf)
-
-                        moved_with_symbol = True
-                        break # Processou a transição mais longa possível, vai para a próxima config da fila
-            
-            # --- 2. Processar transições Epsilon (mesmo se consumiu símbolo ou se chegou ao fim) ---
-            # Calcula o fecho epsilon APENAS da configuração atual para adicionar à fila
-            # Nota: _get_epsilon_closure já lida com pop/push de epsilon
-            epsilon_neighbors = self._get_epsilon_closure({(current_state, current_idx, current_stack)})
-            
-            for conf in epsilon_neighbors:
-                 # Adiciona apenas se for diferente da config atual e não estiver já na fila/visitado
-                 if conf != config_tuple and conf not in queue and conf not in visited_in_step:
-                     queue.append(conf)
-                     # Se chegou ao fim da entrada via epsilon, também é final
-                     if conf[1] == len(input_str):
-                         final_reachable_configs.add(conf)
-
-
-        # Após o loop, verifica a aceitação
-        accepted = any(c_state in self.final_states for c_state, c_idx, _ in final_reachable_configs if c_idx == len(input_str))
-
-        # Garante que o histórico tenha pelo menos o estado inicial
-        if not history:
-             history.append((self.start_state if self.start_state else "-", 0, (self.start_stack_symbol,)))
-
-        # Ajusta o histórico para ter o formato correto (estado, indice, pilha)
-        # Se a máquina travou, o último item do histórico pode não ter o índice correto
-        final_history = []
-        last_idx = 0
-        for state, idx, stack in history:
-            final_history.append((state, idx, stack))
-            last_idx = idx
-            
-        # Se travou antes do fim, adiciona um estado de "trava"
-        if last_idx < len(input_str) and not accepted:
-             # Pega a última pilha válida registrada
-             last_valid_stack = final_history[-1][2] if final_history else tuple()
-             final_history.append(("-", last_idx, last_valid_stack)) # Estado '-' indica trava
-
-        return final_history, accepted
-
-
-    def _get_epsilon_closure(self, configs: Set[Tuple[str, int, Tuple]]) -> Set[Tuple[str, int, Tuple]]:
+    def _get_epsilon_closure(self, configs: Set[Tuple[str, int, Tuple[str, ...]]]) -> Set[Tuple[str, int, Tuple[str, ...]]]:
         """Calcula o fecho-epsilon de um conjunto de configurações (estado, indice, pilha)."""
         closure = set(configs)
         queue = list(configs)
-        
-        visited_epsilon = set() # Evita loops infinitos de epsilon
 
         while queue:
             state, input_idx, stack = queue.pop(0)
-            
-            config_key = (state, stack) # Chave para visited_epsilon não depende do índice
-            if config_key in visited_epsilon: continue
-            visited_epsilon.add(config_key)
 
             # Transições ε que não desempilham (lê ε, desempilha ε)
             key = (state, EPSILON, EPSILON)
             for next_state, push_syms in self.transitions.get(key, set()):
-                # Empilha da direita para a esquerda (último caractere no topo)
                 new_stack = stack + tuple(push_syms) if push_syms != EPSILON else stack
                 new_config = (next_state, input_idx, new_stack)
                 if new_config not in closure:
                     closure.add(new_config)
                     queue.append(new_config)
-                    # Se adicionou, remove dos visitados para permitir re-exploração de outro caminho
-                    visited_epsilon.discard((next_state, new_stack)) 
             
             # Transições ε que desempilham (lê ε, desempilha topo)
             top = stack[-1] if stack else None
@@ -270,30 +195,23 @@ class AutomatoPilha:
                 key = (state, EPSILON, top)
                 for next_state, push_syms in self.transitions.get(key, set()):
                     stack_base = stack[:-1]
-                    # Empilha da direita para a esquerda
                     new_stack = stack_base + tuple(push_syms) if push_syms != EPSILON else stack_base
                     new_config = (next_state, input_idx, new_stack)
                     if new_config not in closure:
                         closure.add(new_config)
                         queue.append(new_config)
-                        visited_epsilon.discard((next_state, new_stack))
         return closure
 
-    def _move_with_symbol(self, configs: Set[Tuple[str, int, Tuple]], symbol: str) -> Set[Tuple[str, int, Tuple]]:
+    def _move_with_symbol(self, configs: Set[Tuple[str, int, Tuple[str, ...]]], symbol: str) -> Set[Tuple[str, int, Tuple[str, ...]]]:
         """Processa transições para um símbolo de entrada específico (pode ser multi-caractere)."""
         next_configs = set()
-        symbol_len = len(symbol)
 
         for state, input_idx, stack in configs:
-            
-            new_input_idx = input_idx + symbol_len # Novo índice após consumir o símbolo
-            
             # Transições que não desempilham (lê symbol, desempilha ε)
             key = (state, symbol, EPSILON)
             for next_state, push_syms in self.transitions.get(key, set()):
-                 # Empilha da direita para a esquerda
                 new_stack = stack + tuple(push_syms) if push_syms != EPSILON else stack
-                next_configs.add((next_state, new_input_idx, new_stack))
+                next_configs.add((next_state, input_idx, new_stack))
 
             # Transições que desempilham (lê symbol, desempilha topo)
             top = stack[-1] if stack else None
@@ -301,9 +219,8 @@ class AutomatoPilha:
                 key = (state, symbol, top)
                 for next_state, push_syms in self.transitions.get(key, set()):
                     stack_base = stack[:-1]
-                     # Empilha da direita para a esquerda
                     new_stack = stack_base + tuple(push_syms) if push_syms != EPSILON else stack_base
-                    next_configs.add((next_state, new_input_idx, new_stack))
+                    next_configs.add((next_state, input_idx, new_stack))
         return next_configs
     # ***** FIM DAS MODIFICAÇÕES *****
 

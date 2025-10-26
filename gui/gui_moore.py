@@ -429,8 +429,76 @@ class MooreGUI:
             messagebox.showerror("Exportar PNG", f"Ocorreu um erro: {e}", parent=self.root)
 
     def _generate_svg_text(self):
-        # Placeholder - A implementação real geraria o SVG do autômato
-        return '<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"></svg>'
+        # Gera SVG baseado nas posições atuais (espelha draw_all)
+        try:
+            self.canvas.update_idletasks()
+            self.canvas.update()
+        except Exception:
+            pass
+
+        w = self.canvas.winfo_width() or 800
+        h = self.canvas.winfo_height() or 600
+        state_r = STATE_RADIUS * self.scale
+
+        def esc(t):
+            return str(t).replace('&', '&amp;')
+
+        # Agrega transições (src,dst) -> set(labels)
+        agg = {}
+        for (src, inp), dst in self.moore_machine.transitions.items():
+            agg.setdefault((src, dst), set()).add(inp)
+
+        svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">']
+        svg.append('<defs>')
+        svg.append('<marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="5" orient="auto" markerUnits="strokeWidth">')
+        svg.append('<path d="M0,0 L0,10 L10,5 z" fill="#000" />')
+        svg.append('</marker>')
+        svg.append('</defs>')
+
+        for (src, dst), labels in agg.items():
+            if src not in self.positions or dst not in self.positions: continue
+            x1, y1 = self._from_canvas(*self.positions[src])
+            x2, y2 = self._from_canvas(*self.positions[dst])
+            label = ", ".join(sorted([lbl.replace(EPSILON, 'ε') for lbl in labels]))
+            if src == dst:
+                lx = x1
+                ly = y1 - state_r - 20
+                path = f'M {x1},{y1-state_r} C {x1-30},{ly} {x1+30},{ly} {x1},{y1-state_r}'
+                svg.append(f'<path d="{path}" fill="none" stroke="black" stroke-width="1.5" marker-end="url(#arrow)"/>')
+                svg.append(f'<text x="{x1}" y="{ly-5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+            else:
+                if (dst, src) in agg:
+                    dx = x2 - x1; dy = y2 - y1; dist = (dx*dx+dy*dy)**0.5 or 1
+                    ux, uy = dx/dist, dy/dist
+                    px, py = -uy, ux
+                    offset = 20
+                    cx, cy = (x1 + x2)/2 + px*offset, (y1 + y2)/2 + py*offset
+                    path = f'M {x1},{y1} Q {cx},{cy} {x2},{y2}'
+                    svg.append(f'<path d="{path}" fill="none" stroke="black" stroke-width="1.5" marker-end="url(#arrow)"/>')
+                    txt_x, txt_y = (x1 + x2)/2 + px*(offset+10), (y1 + y2)/2 + py*(offset+10)
+                    svg.append(f'<text x="{txt_x}" y="{txt_y}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+                else:
+                    svg.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="black" stroke-width="1.5" marker-end="url(#arrow)" />')
+                    txt_x, txt_y = (x1 + x2)/2, (y1 + y2)/2
+                    svg.append(f'<text x="{txt_x}" y="{txt_y-5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+
+        # Estados (inclui símbolo de saída no rótulo)
+        for sid in sorted(list(self.moore_machine.states)):
+            x_logic, y_logic = self.positions.get(sid, (100, 100))
+            x, y = self._from_canvas(x_logic, y_logic)
+            output_sym = self.moore_machine.output_function.get(sid, '?')
+            state_label = f"{sid} — {output_sym}"
+            fill = "#e0f2fe" if sid == (self.history[self.sim_step][0] if self.history else None) else "white"
+            svg.append(f'<circle cx="{x}" cy="{y}" r="{state_r}" fill="{fill}" stroke="black" stroke-width="2" />')
+            svg.append(f'<text x="{x}" y="{y+5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(state_label)}</text>')
+
+        if self.moore_machine.start_state and self.moore_machine.start_state in self.positions:
+            sx, sy = self._from_canvas(*self.positions[self.moore_machine.start_state])
+            x0 = sx - state_r*2
+            svg.append(f'<line x1="{x0}" y1="{sy}" x2="{sx-state_r}" y2="{sy}" stroke="black" stroke-width="2" marker-end="url(#arrow)" />')
+
+        svg.append('</svg>')
+        return '\n'.join(svg)
 
     # --- Comandos de Simulação ---
     def cmd_animate(self):

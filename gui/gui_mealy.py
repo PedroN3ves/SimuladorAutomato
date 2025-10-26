@@ -386,6 +386,11 @@ class MealyGUI:
             self.root.title(f"Editor de Máquinas de Mealy — {self.current_filepath}")
             self.undo_stack = [snapshot] # Reseta histórico
             self.redo_stack.clear()
+            # Ajusta a visualização para centralizar os estados carregados (evita tela em branco)
+            try:
+                self.center_view()
+            except Exception:
+                pass
             self.draw_all()
             self.status.config(text=f"Arquivo '{path}' carregado com sucesso.")
         except Exception as e:
@@ -462,8 +467,78 @@ class MealyGUI:
             messagebox.showerror("Exportar PNG", f"Ocorreu um erro: {e}", parent=self.root)
 
     def _generate_svg_text(self):
-        # Placeholder simples, precisa implementar a geração real do SVG
-        return '<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"></svg>'
+        # Gera SVG baseado nas posições atuais (espelha draw_all)
+        try:
+            self.canvas.update_idletasks()
+            self.canvas.update()
+        except Exception:
+            pass
+
+        w = self.canvas.winfo_width() or 800
+        h = self.canvas.winfo_height() or 600
+        state_r = STATE_RADIUS * self.scale
+
+        def esc(t):
+            return str(t).replace('&', '&amp;')
+
+        # Agrega transições (src,dst) -> set(label)
+        agg = {}
+        for (src, inp), (dst, outp) in self.mealy_machine.transitions.items():
+            label = f"{inp.replace(EPSILON, 'ε')}/{outp.replace(EPSILON, 'ε')}"
+            agg.setdefault((src, dst), set()).add(label)
+
+        svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">']
+        svg.append('<defs>')
+        svg.append('<marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="5" orient="auto" markerUnits="strokeWidth">')
+        svg.append('<path d="M0,0 L0,10 L10,5 z" fill="#000" />')
+        svg.append('</marker>')
+        svg.append('</defs>')
+
+        for (src, dst), labels in agg.items():
+            if src not in self.positions or dst not in self.positions: continue
+            x1, y1 = self._from_canvas(*self.positions[src])
+            x2, y2 = self._from_canvas(*self.positions[dst])
+            # Use single-line, comma-separated labels (cairosvg/SVG renderers may not honor literal newlines)
+            label = ", ".join(sorted(list(labels)))
+            if src == dst:
+                lx = x1
+                ly = y1 - state_r - 20
+                path = f'M {x1},{y1-state_r} C {x1-30},{ly} {x1+30},{ly} {x1},{y1-state_r}'
+                svg.append(f'<path d="{path}" fill="none" stroke="black" stroke-width="1.5" marker-end="url(#arrow)"/>')
+                svg.append(f'<text x="{x1}" y="{ly-5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+            else:
+                if (dst, src) in agg:
+                    dx = x2 - x1; dy = y2 - y1; dist = (dx*dx+dy*dy)**0.5 or 1
+                    ux, uy = dx/dist, dy/dist
+                    px, py = -uy, ux
+                    offset = 20
+                    cx, cy = (x1 + x2)/2 + px*offset, (y1 + y2)/2 + py*offset
+                    path = f'M {x1},{y1} Q {cx},{cy} {x2},{y2}'
+                    svg.append(f'<path d="{path}" fill="none" stroke="black" stroke-width="1.5" marker-end="url(#arrow)"/>')
+                    txt_x, txt_y = (x1 + x2)/2 + px*(offset+10), (y1 + y2)/2 + py*(offset+10)
+                    svg.append(f'<text x="{txt_x}" y="{txt_y}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+                else:
+                    svg.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="black" stroke-width="1.5" marker-end="url(#arrow)" />')
+                    txt_x, txt_y = (x1 + x2)/2, (y1 + y2)/2
+                    svg.append(f'<text x="{txt_x}" y="{txt_y-5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+
+        # Estado ativo (se houver) no histórico: histórico é (estado, output_str, idx)
+        active_state = (self.history[self.sim_step][0] if self.history and len(self.history) > self.sim_step else None)
+        for sid in sorted(list(self.mealy_machine.states)):
+            if sid not in self.positions: continue
+            x_logic, y_logic = self.positions[sid]
+            x, y = self._from_canvas(x_logic, y_logic)
+            fill = "#e0f2fe" if (active_state is not None and sid == active_state) else "white"
+            svg.append(f'<circle cx="{x}" cy="{y}" r="{state_r}" fill="{fill}" stroke="black" stroke-width="2" />')
+            svg.append(f'<text x="{x}" y="{y+5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(sid)}</text>')
+
+        if self.mealy_machine.start_state and self.mealy_machine.start_state in self.positions:
+            sx, sy = self._from_canvas(*self.positions[self.mealy_machine.start_state])
+            x0 = sx - state_r*2
+            svg.append(f'<line x1="{x0}" y1="{sy}" x2="{sx-state_r}" y2="{sy}" stroke="black" stroke-width="2" marker-end="url(#arrow)" />')
+
+        svg.append('</svg>')
+        return '\n'.join(svg)
 
     # --- Handlers de Eventos do Canvas ---
     def on_canvas_click(self, event):

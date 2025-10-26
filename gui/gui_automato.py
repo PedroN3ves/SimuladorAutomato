@@ -377,6 +377,11 @@ class EditorGUI:
             self.root.title(f"IC-Tômato++ — {self.current_filepath}")
             self.undo_stack = [snapshot] # Reseta o histórico de undo/redo
             self.redo_stack.clear()
+            # Ajusta a visualização para centralizar os estados carregados
+            try:
+                self._center_on_positions()
+            except Exception:
+                pass
             self.draw_all()
             self.status.config(text=f"Arquivo '{path}' carregado com sucesso.")
         except Exception as e:
@@ -966,6 +971,27 @@ class EditorGUI:
         x, y = 100, 100
         for i, s in enumerate(sorted(list(self.automato.states))): self.positions[s] = (x + (i%7)*120, y + (i//7)*120)
 
+    def _center_on_positions(self):
+        """Centraliza a view do canvas nas posições atuais dos estados."""
+        if not self.positions:
+            return
+        try:
+            self.canvas.update_idletasks(); self.canvas.update()
+        except Exception:
+            pass
+        xs = [p[0] for p in self.positions.values()]
+        ys = [p[1] for p in self.positions.values()]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        canvas_w = self.canvas.winfo_width() or 800
+        canvas_h = self.canvas.winfo_height() or 600
+
+        # Ajusta offsets para centralizar o centro lógico no centro do canvas
+        self.offset_x = canvas_w / 2 - center_x * self.scale
+        self.offset_y = canvas_h / 2 - center_y * self.scale
+
     # ***** INÍCIO DA MODIFICAÇÃO *****
     def cmd_simulate(self):
         self.sim_input_str = self.input_entry.get()
@@ -1058,5 +1084,87 @@ class EditorGUI:
         else: self.status.config(text="Nada para refazer.")
 
     def _generate_svg_text(self):
-        # Placeholder
-        return '<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"></svg>'
+        # Gera um SVG simples do autômato baseado nas posições atuais.
+        # Esta implementação espelha parte do que a função draw_all desenha no Canvas.
+        # Garante que o Canvas tenha dimensões atualizadas
+        try:
+            self.canvas.update_idletasks()
+            self.canvas.update()
+        except Exception:
+            pass
+
+        w = self.canvas.winfo_width() or 800
+        h = self.canvas.winfo_height() or 600
+        state_r = STATE_RADIUS * self.scale
+
+        def esc(t):
+            return str(t).replace('&', '&amp;')
+
+        # Agrega transições (src,dst) -> set(symbols)
+        agg = {}
+        for (src, sym), dsts in self.automato.transitions.items():
+            for dst in dsts:
+                agg.setdefault((src, dst), set()).add(sym)
+
+        svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">']
+
+        # Define marker para setas
+        svg.append('<defs>')
+        svg.append('<marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="5" orient="auto" markerUnits="strokeWidth">')
+        svg.append('<path d="M0,0 L0,10 L10,5 z" fill="#000" />')
+        svg.append('</marker>')
+        svg.append('</defs>')
+
+        # Desenha arestas
+        for (src, dst), syms in agg.items():
+            if src not in self.positions or dst not in self.positions: continue
+            x1, y1 = self._from_canvas(*self.positions[src])
+            x2, y2 = self._from_canvas(*self.positions[dst])
+
+            label = ",".join(sorted(list(syms))).replace(EPSILON, "ε")
+
+            if src == dst:
+                # self-loop: desenha um arco circular acima do estado
+                lx = x1
+                ly = y1 - state_r - 20
+                path = f'M {x1},{y1-state_r} C {x1-30},{ly} {x1+30},{ly} {x1},{y1-state_r}'
+                svg.append(f'<path d="{path}" fill="none" stroke="black" stroke-width="1.5" marker-end="url(#arrow)"/>')
+                svg.append(f'<text x="{x1}" y="{ly-5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+            else:
+                # curva se existir transição de volta
+                offset = 0
+                if (dst, src) in agg:
+                    # calcula deslocamento perpendicular
+                    dx = x2 - x1; dy = y2 - y1; dist = (dx*dx+dy*dy)**0.5 or 1
+                    ux, uy = dx/dist, dy/dist
+                    px, py = -uy, ux
+                    offset = 20
+                    cx, cy = (x1 + x2)/2 + px*offset, (y1 + y2)/2 + py*offset
+                    path = f'M {x1},{y1} Q {cx},{cy} {x2},{y2}'
+                    svg.append(f'<path d="{path}" fill="none" stroke="black" stroke-width="1.5" marker-end="url(#arrow)"/>')
+                    txt_x, txt_y = (x1 + x2)/2 + px*(offset+10), (y1 + y2)/2 + py*(offset+10)
+                    svg.append(f'<text x="{txt_x}" y="{txt_y}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+                else:
+                    svg.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="black" stroke-width="1.5" marker-end="url(#arrow)" />')
+                    txt_x, txt_y = (x1 + x2)/2, (y1 + y2)/2
+                    svg.append(f'<text x="{txt_x}" y="{txt_y-5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+
+        # Estados
+        for sid in sorted(list(self.automato.states)):
+            x_logic, y_logic = self.positions.get(sid, (100, 100))
+            x, y = self._from_canvas(x_logic, y_logic)
+            fill = "#e0f2fe" if sid in (self.history[self.sim_step][0] if self.history else set()) else "white"
+            svg.append(f'<circle cx="{x}" cy="{y}" r="{state_r}" fill="{fill}" stroke="black" stroke-width="2" />')
+            svg.append(f'<text x="{x}" y="{y+5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(sid)}</text>')
+            if sid in self.automato.final_states:
+                inner_r = state_r - 6
+                svg.append(f'<circle cx="{x}" cy="{y}" r="{inner_r}" fill="none" stroke="black" stroke-width="2" />')
+
+        # start arrow
+        if self.automato.start_state and self.automato.start_state in self.positions:
+            sx, sy = self._from_canvas(*self.positions[self.automato.start_state])
+            x0 = sx - state_r*2
+            svg.append(f'<line x1="{x0}" y1="{sy}" x2="{sx-state_r}" y2="{sy}" stroke="black" stroke-width="2" marker-end="url(#arrow)" />')
+
+        svg.append('</svg>')
+        return '\n'.join(svg)

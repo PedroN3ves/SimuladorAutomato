@@ -238,6 +238,145 @@ class Automato:
                 dfa.add_transition(T_name, sym, state_map[U])
         return dfa
 
+    def to_regular_grammar(self, strict: bool = False) -> str:
+        """Converte o autômato para uma Gramática Regular (direita-linear).
+
+        Se strict=True, a função converte qualquer símbolo multi-caractere em
+        uma sequência de produções que usam apenas terminais de um caractere
+        seguidos por não-terminais, produzindo uma gramática na forma estrita.
+        """
+        if not self.start_state:
+            raise ValueError("Estado inicial não definido.")
+
+        prods = defaultdict(set)  # state -> set of RHS items (str for EPSILON or (sym, dst))
+
+        # Coleta produções na forma estendida (simbolos podem ser multi-char)
+        for p in sorted(self.states):
+            closure = self.epsilon_closure({p})
+            if any(s in self.final_states for s in closure):
+                prods[p].add(EPSILON)
+
+            for r in closure:
+                for (src, sym), dsts in list(self.transitions.items()):
+                    if src != r or sym == EPSILON:
+                        continue
+                    for dst in dsts:
+                        prods[p].add((sym, dst))
+                        if dst in self.final_states:
+                            prods[p].add((sym, None))
+
+        # Se não precisa ser estrita, formata e retorna a gramática estendida
+        if not strict:
+            lines = []
+            lines.append("# Gramática Regular gerada (estendida)")
+            lines.append(f"# Símbolos terminais: {sorted([s for s in self.alphabet if s != EPSILON])}")
+            lines.append(f"# Não-terminais (estados): {sorted(list(self.states))}")
+            lines.append("")
+            lines.append(f"S = {self.start_state}")
+            lines.append("")
+
+            def _sort_key(item):
+                if isinstance(item, str):
+                    return (0, item, "")
+                else:
+                    sym, dst = item
+                    return (1, sym, dst or "")
+
+            for p in sorted(self.states):
+                rhss = prods.get(p, set())
+                if not rhss:
+                    continue
+                parts = []
+                for item in sorted(rhss, key=_sort_key):
+                    if isinstance(item, str):
+                        parts.append("ε" if item == EPSILON else item)
+                    else:
+                        sym, dst = item
+                        parts.append(f"{sym}" if dst is None else f"{sym} {dst}")
+                lines.append(f"{p} -> {' | '.join(parts)}")
+
+            return "\n".join(lines)
+
+        # --- strict=True: converte símbolos multi-char em cadeias de produções ---
+        new_counter = 0
+        def _new_nt():
+            nonlocal new_counter
+            while True:
+                name = f"__G{new_counter}"
+                new_counter += 1
+                if name not in self.states:
+                    return name
+
+        strict_prods = defaultdict(set)
+        nonterminals = set(self.states)
+
+        # Processa as produções originais e quebra símbolos longos
+        for p in sorted(self.states):
+            rhss = prods.get(p, set())
+            for item in rhss:
+                if isinstance(item, str):
+                    strict_prods[p].add(EPSILON)
+                else:
+                    sym, dst = item
+                    # símbolo terminal (pode ser multi-caractere)
+                    if sym == EPSILON:
+                        strict_prods[p].add(EPSILON)
+                        continue
+
+                    chars = list(sym)
+                    if len(chars) == 1:
+                        # produção simples: p -> a B  (B pode ser None)
+                        strict_prods[p].add((chars[0], dst))
+                    else:
+                        prev = p
+                        for i, ch in enumerate(chars):
+                            if i == len(chars) - 1:
+                                # último caractere: aponta para dst (pode ser None)
+                                strict_prods[prev].add((ch, dst))
+                            else:
+                                nt = _new_nt()
+                                nonterminals.add(nt)
+                                strict_prods[prev].add((ch, nt))
+                                prev = nt
+
+        # Formata a gramática estrita para saída
+        lines = []
+        lines.append("# Gramática Regular gerada (forma estrita)")
+        # terminais: cada caractere presente no alfabeto expandido
+        terminals = set()
+        for (src, sym), dsts in self.transitions.items():
+            if sym != EPSILON:
+                for ch in sym:
+                    terminals.add(ch)
+
+        lines.append(f"# Símbolos terminais: {sorted(list(terminals))}")
+        lines.append(f"# Não-terminais: {sorted(list(nonterminals))}")
+        lines.append("")
+        lines.append(f"S = {self.start_state}")
+        lines.append("")
+
+        def _sort_key(item):
+            if isinstance(item, str):
+                return (0, item, "")
+            else:
+                sym, dst = item
+                return (1, sym, dst or "")
+
+        for p in sorted(nonterminals):
+            rhss = strict_prods.get(p, set())
+            if not rhss:
+                continue
+            parts = []
+            for item in sorted(rhss, key=_sort_key):
+                if isinstance(item, str):
+                    parts.append("ε" if item == EPSILON else item)
+                else:
+                    sym, dst = item
+                    parts.append(f"{sym}" if dst is None else f"{sym} {dst}")
+            lines.append(f"{p} -> {' | '.join(parts)}")
+
+        return "\n".join(lines)
+
     # -------------------------
     # Minimização de AFD
     # -------------------------

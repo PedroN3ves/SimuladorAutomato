@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import font
 from tkinter import ttk
 import io
+import os
 import ctypes
 import urllib.request
 from PIL import Image, ImageTk
@@ -107,50 +108,117 @@ class MainMenu:
 
     def launch_automaton_editor(self):
         """Cria uma nova janela (Toplevel) para o editor de autômatos."""
-        automaton_window = tk.Toplevel(self.root)
-        app = EditorGUI(automaton_window)
+        self.open_editor_window(EditorGUI)
 
     def launch_mealy_editor(self):
         """Cria uma nova janela (Toplevel) para o editor de Mealy."""
-        mealy_window = tk.Toplevel(self.root)
-        app = MealyGUI(mealy_window)
+        self.open_editor_window(MealyGUI)
 
     def launch_moore_editor(self):
         """Cria uma nova janela para o editor de Moore."""
-        moore_window = tk.Toplevel(self.root)
-        app = MooreGUI(moore_window)
+        self.open_editor_window(MooreGUI)
 
     def launch_pda_editor(self):
         """Cria uma nova janela para o editor de Autômatos de Pilha."""
-        pda_window = tk.Toplevel(self.root)
-        app = PilhaGUI(pda_window)
+        self.open_editor_window(PilhaGUI)
 
     # --- FUNÇÃO ADICIONADA ---
     def launch_turing_editor(self):
         """Cria uma nova janela para o editor de Máquinas de Turing."""
-        turing_window = tk.Toplevel(self.root)
-        app = TuringGUI(turing_window)
+        self.open_editor_window(TuringGUI)
     # -------------------------
 
     def load_logo(self):
         """Carrega e exibe o logo no canto superior direito."""
+        # Tenta usar o ícone local primeiro (mais rápido e sem depender de rede)
+        icon_path = os.path.join(os.path.dirname(__file__), "icons", "icon.ico")
         try:
+            if os.path.exists(icon_path):
+                image = Image.open(icon_path)
+                display_img = image.resize((80, 80), Image.Resampling.LANCZOS)
+                icon_img = image.resize((32, 32), Image.Resampling.LANCZOS)
+
+                self.logo_image = ImageTk.PhotoImage(display_img)
+                self.icon_image = ImageTk.PhotoImage(icon_img)
+
+                # Aplica o .ico como ícone do aplicativo no Windows (e em outras plataformas quando suportado)
+                try:
+                    self.root.iconbitmap(icon_path)
+                except Exception:
+                    # fallback para iconphoto
+                    try:
+                        self.root.iconphoto(False, self.icon_image)
+                    except Exception:
+                        pass
+
+                logo_label = tk.Label(self.root, image=self.logo_image, bg=self.root.cget('bg'))
+                logo_label.place(relx=1.0, y=10, x=-10, anchor='ne')
+                # armazena o caminho para uso em outras janelas
+                self.icon_path = icon_path
+                return
+
+            # Se o ícone local não existir, tenta baixar a imagem remota como antes
             url = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT_Iz4iLTCkvEbHl93acer5aym3CcSl5CHMBg&s"
             with urllib.request.urlopen(url) as response:
                 image_data = response.read()
-            
             image = Image.open(io.BytesIO(image_data))
-            image = image.resize((80, 80), Image.Resampling.LANCZOS)
-            
-            # Mantém uma referência para a imagem para evitar que seja coletada pelo garbage collector
-            self.logo_image = ImageTk.PhotoImage(image)
-            
+            display_img = image.resize((80, 80), Image.Resampling.LANCZOS)
+            icon_img = image.resize((32, 32), Image.Resampling.LANCZOS)
+
+            self.logo_image = ImageTk.PhotoImage(display_img)
+            self.icon_image = ImageTk.PhotoImage(icon_img)
+            try:
+                self.root.iconphoto(False, self.icon_image)
+            except Exception:
+                pass
             logo_label = tk.Label(self.root, image=self.logo_image, bg=self.root.cget('bg'))
-            # Usa place() para posicionamento absoluto no canto superior direito
             logo_label.place(relx=1.0, y=10, x=-10, anchor='ne')
+            self.icon_path = None
 
         except Exception as e:
             print(f"Não foi possível carregar o logo: {e}")
+
+    def open_editor_window(self, EditorClass):
+        """Oculta o menu principal e abre o editor passado como classe.
+
+        Ao fechar a janela do editor, o menu principal é restaurado.
+        """
+        # Oculta a janela principal
+        try:
+            self.root.withdraw()
+        except Exception:
+            pass
+
+        editor_window = tk.Toplevel(self.root)
+        # Aplica o mesmo ícone ao editor (se disponível)
+        try:
+            # Prioriza .ico local via iconbitmap (bom no Windows)
+            if hasattr(self, 'icon_path') and self.icon_path:
+                try:
+                    editor_window.iconbitmap(self.icon_path)
+                except Exception:
+                    # fallback para PhotoImage
+                    if hasattr(self, 'icon_image'):
+                        editor_window.iconphoto(False, self.icon_image)
+            else:
+                if hasattr(self, 'icon_image'):
+                    editor_window.iconphoto(False, self.icon_image)
+        except Exception:
+            pass
+        editor_app = EditorClass(editor_window)
+
+        # Quando o editor for fechado, reexibe a janela principal
+        def on_close():
+            try:
+                editor_window.destroy()
+            except Exception:
+                pass
+            try:
+                self.root.deiconify()
+            except Exception:
+                pass
+
+        editor_window.protocol("WM_DELETE_WINDOW", on_close)
 
 def main():
     root = tk.Tk()

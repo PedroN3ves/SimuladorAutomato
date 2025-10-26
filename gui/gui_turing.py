@@ -342,7 +342,75 @@ class TuringGUI:
         except ImportError: messagebox.showwarning("Exportar PNG", "'cairosvg' não instalado.\nUse: pip install cairosvg", parent=self.root)
         except Exception as e: messagebox.showerror("Erro PNG", f"Falha:\n{e}", parent=self.root)
 
-    def _generate_svg_text(self): return '<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"></svg>' # Placeholder
+    def _generate_svg_text(self):
+        # Gera SVG baseado nas posições atuais (espelha draw_all)
+        try:
+            self.canvas.update_idletasks()
+            self.canvas.update()
+        except Exception:
+            pass
+
+        w = self.canvas.winfo_width() or 800
+        h = self.canvas.winfo_height() or 600
+        state_r = STATE_RADIUS * self.scale
+
+        def esc(t):
+            return str(t).replace('&', '&amp;')
+
+        # Agrega transições (src,dst) -> set(label)
+        agg = {}
+        for (src, read), (dst, write, move) in self.automato.transitions.items():
+            label = f"{read}/{write}, {move}"
+            agg.setdefault((src, dst), set()).add(label)
+
+        svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">']
+        svg.append('<defs>')
+        svg.append('<marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="5" orient="auto" markerUnits="strokeWidth">')
+        svg.append('<path d="M0,0 L0,10 L10,5 z" fill="#000" />')
+        svg.append('</marker>')
+        svg.append('</defs>')
+
+        for (src, dst), labels in agg.items():
+            if src not in self.positions or dst not in self.positions: continue
+            x1, y1 = self._from_canvas(*self.positions[src])
+            x2, y2 = self._from_canvas(*self.positions[dst])
+            label = "\\n".join(sorted(list(labels)))
+            if src == dst:
+                lx = x1
+                ly = y1 - state_r - 20
+                path = f'M {x1},{y1-state_r} C {x1-30},{ly} {x1+30},{ly} {x1},{y1-state_r}'
+                svg.append(f'<path d="{path}" fill="none" stroke="black" stroke-width="1.5" marker-end="url(#arrow)"/>')
+                svg.append(f'<text x="{x1}" y="{ly-5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+            else:
+                if (dst, src) in agg:
+                    dx = x2 - x1; dy = y2 - y1; dist = (dx*dx+dy*dy)**0.5 or 1
+                    ux, uy = dx/dist, dy/dist
+                    px, py = -uy, ux
+                    offset = 20
+                    cx, cy = (x1 + x2)/2 + px*offset, (y1 + y2)/2 + py*offset
+                    path = f'M {x1},{y1} Q {cx},{cy} {x2},{y2}'
+                    svg.append(f'<path d="{path}" fill="none" stroke="black" stroke-width="1.5" marker-end="url(#arrow)"/>')
+                    txt_x, txt_y = (x1 + x2)/2 + px*(offset+10), (y1 + y2)/2 + py*(offset+10)
+                    svg.append(f'<text x="{txt_x}" y="{txt_y}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+                else:
+                    svg.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="black" stroke-width="1.5" marker-end="url(#arrow)" />')
+                    txt_x, txt_y = (x1 + x2)/2, (y1 + y2)/2
+                    svg.append(f'<text x="{txt_x}" y="{txt_y-5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(label)}</text>')
+
+        for sid in sorted(self.automato.states):
+            if sid not in self.positions: continue
+            x_logic, y_logic = self.positions[sid]
+            x, y = self._from_canvas(x_logic, y_logic)
+            svg.append(f'<circle cx="{x}" cy="{y}" r="{state_r}" fill="white" stroke="black" stroke-width="2" />')
+            svg.append(f'<text x="{x}" y="{y+5}" font-family="Helvetica" font-size="12" text-anchor="middle">{esc(sid)}</text>')
+
+        if self.automato.start_state and self.automato.start_state in self.positions:
+            sx, sy = self._from_canvas(*self.positions[self.automato.start_state])
+            x0 = sx - state_r*2
+            svg.append(f'<line x1="{x0}" y1="{sy}" x2="{sx-state_r}" y2="{sy}" stroke="black" stroke-width="2" marker-end="url(#arrow)" />')
+
+        svg.append('</svg>')
+        return '\n'.join(svg)
 
     # --- Comandos Simulação ---
     def cmd_start_simulation(self):
@@ -445,7 +513,7 @@ class TuringGUI:
             dialog.grab_set() # Modal
 
             # Instruções
-            instructions = f"Formato: 'lido / escrito, direcao'\n(Use {DISPLAY_BLANK} ou deixe em branco para {DISPLAY_BLANK})\nEx: a / b, R"
+            instructions = f"Formato: 'Lido / Escrito, Direção'\n(Use {DISPLAY_BLANK} ou deixe em branco para {DISPLAY_BLANK})\nEx: a / b, R"
             tk.Label(dialog, text=f"Transição de '{src}' para '{dst}':\n{instructions}", justify="left").pack(pady=10, padx=12)
 
             # Campo de entrada
@@ -490,7 +558,7 @@ class TuringGUI:
                     self.draw_all()
                     self.status.config(text=f"Transição {src} -> {dst} adicionada.")
                 except (ValueError, IndexError) as e:
-                    messagebox.showerror("Erro Formato", f"Formato inválido. Use 'lido / escrito, direcao'.\nDetalhe: {e}", parent=self.root)
+                    messagebox.showerror("Erro Formato", f"Formato inválido. Use 'Lido / Escrito, Direção'.\nDetalhe: {e}", parent=self.root)
             else: 
                 self.status.config(text="Adição cancelada.")
             
@@ -594,7 +662,7 @@ class TuringGUI:
 
         # --- MODIFICAÇÃO: Aumentado o tamanho do diálogo de edição ---
         dialog = tk.Toplevel(self.root); dialog.title(f"Editar {src} -> {dst}"); dialog.transient(self.root); dialog.grab_set(); dialog.geometry("500x400") # <-- Tamanho aumentado
-        tk.Label(dialog, text=f"Transições (uma por linha):\nFormato: 'lido / escrito, direcao' (use {DISPLAY_BLANK} ou branco)", justify="left").pack(pady=5)
+        tk.Label(dialog, text=f"Transições (uma por linha):\nFormato: 'Lido / Escrito, Direção' (use {DISPLAY_BLANK} ou branco)", justify="left").pack(pady=5)
         text_widget = tk.Text(dialog, wrap="word", height=10, width=55, font=("Courier", 10)); text_widget.pack(pady=5, padx=10, expand=True, fill="both"); text_widget.insert("1.0", initial_value)
         # --- FIM DA MODIFICAÇÃO ---
         
